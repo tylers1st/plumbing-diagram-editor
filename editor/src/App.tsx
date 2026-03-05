@@ -218,9 +218,10 @@ export default function App() {
   }, [selected, history]); // Dependencies ensure handlers have current state
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)" }}>
-      {/* Sidebar */}
-      <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12 }}>
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)" }}>
+        {/* Sidebar */}
+        <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12 }}>
         <h3 style={{ margin: "0 0 12px" }}>Parts</h3>
 
         {PARTS.map((p) => (
@@ -324,9 +325,10 @@ export default function App() {
           </Layer>
         </Stage>
       </div>
+      </div>
 
-      {/* Inspector */}
-      <div style={{ borderLeft: "1px solid var(--border-primary)", padding: 12 }}>
+      {/* Inspector - Overlay Panel */}
+      <div style={{ position: "fixed", right: 0, top: 0, width: 280, height: "100vh", background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)", padding: 12, overflow: "auto", zIndex: 10 }}>
         <h3 style={{ margin: "0 0 12px" }}>Inspector</h3>
 
         {!selected || !selectedDef ? (
@@ -378,6 +380,6 @@ export default function App() {
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }
