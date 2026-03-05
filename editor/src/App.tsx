@@ -7,6 +7,7 @@ const CANVAS_W = 1100;
 const CANVAS_H = 700;
 
 function Grid() {
+  // Build the static grid lines once; the canvas dimensions are constants.
   const lines = useMemo(() => {
     const l: any[] = [];
 
@@ -39,6 +40,7 @@ function Grid() {
 }
 
 export default function App() {
+  // Each item represents a draggable part's top-left position on the canvas.
   const [placed, setPlaced] = useState<{ x: number; y: number }[]>([]);
 
   return (
@@ -49,6 +51,7 @@ export default function App() {
 
         <button
           style={{ width: "100%", padding: 10, cursor: "pointer" }}
+          // Adds a sample part so drag/snap behavior can be tested quickly.
           onClick={() => setPlaced((p) => [...p, { x: 100, y: 100 }])}
         >
           Add test part
@@ -78,6 +81,7 @@ export default function App() {
                 stroke="#1f2937"
                 draggable
                 onDragEnd={(e) => {
+                  // Snap to grid: convert px to grid units, round to nearest cell, then convert back to px.
                   const nx = Math.round(e.target.x() / GRID) * GRID;
                   const ny = Math.round(e.target.y() / GRID) * GRID;
                   setPlaced((prev) => {
