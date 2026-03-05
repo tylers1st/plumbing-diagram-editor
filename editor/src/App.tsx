@@ -8,17 +8,34 @@ const GRID = 25;
 const CANVAS_W = 1100;
 const CANVAS_H = 700;
 
-function Grid() {
+// Hook to detect dark mode
+function useDarkMode() {
+  const [isDark, setIsDark] = useState(() => 
+    window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
+    mediaQuery.addEventListener("change", handler);
+    return () => mediaQuery.removeEventListener("change", handler);
+  }, []);
+
+  return isDark;
+}
+
+function Grid({ isDark }: { isDark: boolean }) {
   // Build the static grid lines once; the canvas dimensions are constants.
   const lines = useMemo(() => {
     const l: any[] = [];
+    const gridColor = isDark ? "#404040" : "#e5e7eb";
 
     for (let x = 0; x <= CANVAS_W; x += GRID) {
       l.push(
         <Line
           key={`vx${x}`}
           points={[x, 0, x, CANVAS_H]}
-          stroke="#e5e7eb"
+          stroke={gridColor}
           strokeWidth={1}
           listening={false}
         />
@@ -29,14 +46,14 @@ function Grid() {
         <Line
           key={`hy${y}`}
           points={[0, y, CANVAS_W, y]}
-          stroke="#e5e7eb"
+          stroke={gridColor}
           strokeWidth={1}
           listening={false}
         />
       );
     }
     return l;
-  }, []);
+  }, [isDark]);
 
   return <>{lines}</>;
 }
@@ -61,6 +78,8 @@ function getPartDef(partId: string): PartDef {
 }
 
 export default function App() {
+  const isDark = useDarkMode();
+  
   // Each item represents a draggable part's position + metadata.
   const [placed, setPlaced] = useState<PlacedPart[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -199,9 +218,9 @@ export default function App() {
   }, [selected, history]); // Dependencies ensure handlers have current state
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100vh" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       {/* Sidebar */}
-      <div style={{ borderRight: "1px solid #ddd", padding: 12 }}>
+      <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12 }}>
         <h3 style={{ margin: "0 0 12px" }}>Parts</h3>
 
         {PARTS.map((p) => (
@@ -214,18 +233,18 @@ export default function App() {
           </button>
         ))}
 
-        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #ddd" }} />
+        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border-primary)" }} />
 
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            style={{ flex: 1, padding: 10, cursor: "pointer", background: "#dbeafe", border: "1px solid #3b82f6" }}
+            style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
             onClick={exportToFile}
             title="Export diagram to JSON file"
           >
             💾 Export
           </button>
           <button
-            style={{ flex: 1, padding: 10, cursor: "pointer", background: "#dbeafe", border: "1px solid #3b82f6" }}
+            style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
             onClick={importFromFile}
             title="Import diagram from JSON file"
           >
@@ -243,14 +262,14 @@ export default function App() {
         <Stage
           width={CANVAS_W}
           height={CANVAS_H}
-          style={{ border: "1px solid #ddd", background: "white" }}
+          style={{ border: "1px solid var(--border-primary)", background: "var(--canvas-bg)" }}
           onMouseDown={(e) => {
             // Click empty space to deselect
             if (e.target === e.target.getStage()) setSelectedId(null);
           }}
         >
           <Layer>
-            <Grid />
+            <Grid isDark={isDark} />
           </Layer>
 
           <Layer>
@@ -292,22 +311,22 @@ export default function App() {
                   <Rect
                     width={wPx}
                     height={hPx}
-                    fill="#93c5fd"
-                    stroke={isSel ? "#ef4444" : "#1f2937"}
+                    fill={isDark ? "#2563eb" : "#93c5fd"}
+                    stroke={isSel ? "#ef4444" : (isDark ? "#e5e7eb" : "#1f2937")}
                     strokeWidth={isSel ? 3 : 1}
                   />
-                  <Text x={6} y={6} text={`${def.name}\n${p.size}"`} fontSize={12} fill="#111827" />
+                  <Text x={6} y={6} text={`${def.name}\n${p.size}"`} fontSize={12} fill={isDark ? "#e5e7eb" : "#111827"} />
                 </Group>
               );
             })}
 
-            <Text x={10} y={10} text="Plumbing editor prototype: catalog + select + snap" fontSize={14} fill="#111827" />
+            <Text x={10} y={10} text="Plumbing editor prototype: catalog + select + snap" fontSize={14} fill={isDark ? "#e5e7eb" : "#111827"} />
           </Layer>
         </Stage>
       </div>
 
       {/* Inspector */}
-      <div style={{ borderLeft: "1px solid #ddd", padding: 12 }}>
+      <div style={{ borderLeft: "1px solid var(--border-primary)", padding: 12 }}>
         <h3 style={{ margin: "0 0 12px" }}>Inspector</h3>
 
         {!selected || !selectedDef ? (
@@ -347,13 +366,13 @@ export default function App() {
             </div>
 
             <button
-              style={{ padding: 10, width: "100%", background: "#fee2e2", border: "1px solid #ef4444", cursor: "pointer" }}
+              style={{ padding: 10, width: "100%", background: "var(--bg-danger)", border: "1px solid var(--border-danger)", cursor: "pointer", color: "var(--text-primary)" }}
               onClick={deleteSelected}
             >
               Delete part
             </button>
 
-            <pre style={{ marginTop: 12, fontSize: 11, background: "#f9fafb", padding: 10, overflow: "auto" }}>
+            <pre style={{ marginTop: 12, fontSize: 11, background: "var(--bg-secondary)", padding: 10, overflow: "auto", color: "var(--text-primary)" }}>
 {JSON.stringify(selected, null, 2)}
             </pre>
           </>
