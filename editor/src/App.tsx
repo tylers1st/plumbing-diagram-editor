@@ -86,6 +86,9 @@ export default function App() {
   
   // History stack for undo (stores previous states)
   const [history, setHistory] = useState<PlacedPart[][]>([]);
+  
+  // Clipboard for copy/cut/paste operations
+  const [clipboard, setClipboard] = useState<PlacedPart | null>(null);
 
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDef(selected.partId) : null;
@@ -136,6 +139,40 @@ export default function App() {
     updateSelected({ rotation: (selected.rotation + 90) % 360 });
   };
 
+  // Copy selected part to clipboard
+  const copySelected = () => {
+    if (!selected) return;
+    setClipboard(selected);
+  };
+
+  // Cut selected part (copy to clipboard and delete)
+  const cutSelected = () => {
+    if (!selected) return;
+    copySelected();
+    deleteSelected();
+  };
+
+  // Paste from clipboard (create new instance with offset)
+  const pasteFromClipboard = () => {
+    if (!clipboard) return;
+    saveHistory();
+    const newItem: PlacedPart = {
+      ...clipboard,
+      instanceId: uid(), // New unique ID
+      x: clipboard.x + GRID * 2, // Offset by 2 grid cells
+      y: clipboard.y + GRID * 2,
+    };
+    setPlaced((prev) => [...prev, newItem]);
+    setSelectedId(newItem.instanceId);
+  };
+
+  // Duplicate selected part
+  const duplicateSelected = () => {
+    if (!selected) return;
+    copySelected();
+    pasteFromClipboard();
+  };
+
   // Export current diagram to JSON file
   const exportToFile = () => {
     const data = JSON.stringify(placed, null, 2);
@@ -180,6 +217,31 @@ export default function App() {
         e.preventDefault();
         undo();
       }
+      // Ctrl+S or Cmd+S for export
+      else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        exportToFile();
+      }
+      // Ctrl+C or Cmd+C for copy
+      else if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+        e.preventDefault();
+        copySelected();
+      }
+      // Ctrl+X or Cmd+X for cut
+      else if ((e.ctrlKey || e.metaKey) && e.key === "x") {
+        e.preventDefault();
+        cutSelected();
+      }
+      // Ctrl+V or Cmd+V for paste
+      else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        e.preventDefault();
+        pasteFromClipboard();
+      }
+      // Ctrl+D or Cmd+D for duplicate
+      else if ((e.ctrlKey || e.metaKey) && e.key === "d") {
+        e.preventDefault();
+        duplicateSelected();
+      }
       // R for rotate
       else if (e.key === "r" || e.key === "R") {
         rotateSelected();
@@ -188,34 +250,14 @@ export default function App() {
       else if (e.key === "Delete" || e.key === "Backspace") {
         deleteSelected();
       }
-      else if ((e.ctrlKey || e.metaKey) && e.key === "y") {
-        e.preventDefault();
-        // Redo functionality could be implemented here by maintaining a separate redo stack
-        // For simplicity, it's not implemented in this prototype.
-      }
       else if (e.key === "Escape") {
         setSelectedId(null);
-      }
-      else if ((e.ctrlKey || e.metaKey) && e.key === "c") {
-        e.preventDefault();
-        // Copy functionality could be implemented here by storing the selected part in a clipboard state
-        // For simplicity, it's not implemented in this prototype.
-      }
-      else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
-        e.preventDefault();
-        // Paste functionality could be implemented here by creating a new part based on the clipboard state
-        // For simplicity, it's not implemented in this prototype.
-      }
-      else if ((e.ctrlKey || e.metaKey) && e.key === "x") {
-        e.preventDefault();
-        // Cut functionality could be implemented here by copying the selected part to clipboard and then deleting it
-        // For simplicity, it's not implemented in this prototype.
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selected, history]); // Dependencies ensure handlers have current state
+  }, [selected, history, clipboard]); // Dependencies ensure handlers have current state
 
   return (
     <>
