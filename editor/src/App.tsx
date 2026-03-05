@@ -381,7 +381,7 @@ export default function App() {
           </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", marginLeft: "180px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", marginLeft: "0px" }}>
         {/* Parts Panel */}
         <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
           <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
