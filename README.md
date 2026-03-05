@@ -1,2 +1,10 @@
 # plumbing-diagram-editor
-Drag and drop asset diagram program. Designed to allow you to make plumbing drawings from scratch without drawing anything by hand.
+An open-source drag-and-drop tool for creating plumbing training diagrams.
+
+Features (planned):
+- Grid-based layout
+- Drag-and-drop plumbing parts
+- Metadata for pipe size and fittings
+- Export to PNG/PDF
+
+Designed for plumbing education and practice drawings.
