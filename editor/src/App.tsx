@@ -117,6 +117,42 @@ export default function App() {
     updateSelected({ rotation: (selected.rotation + 90) % 360 });
   };
 
+  // Export current diagram to JSON file
+  const exportToFile = () => {
+    const data = JSON.stringify(placed, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `plumbing-diagram-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import diagram from JSON file
+  const importFromFile = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target?.result as string);
+          saveHistory(); // Save current state before loading
+          setPlaced(data);
+          setSelectedId(null);
+        } catch (err) {
+          alert("Failed to load file. Make sure it's a valid JSON file.");
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -177,6 +213,25 @@ export default function App() {
             {p.name}
           </button>
         ))}
+
+        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #ddd" }} />
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            style={{ flex: 1, padding: 10, cursor: "pointer", background: "#dbeafe", border: "1px solid #3b82f6" }}
+            onClick={exportToFile}
+            title="Export diagram to JSON file"
+          >
+            💾 Export
+          </button>
+          <button
+            style={{ flex: 1, padding: 10, cursor: "pointer", background: "#dbeafe", border: "1px solid #3b82f6" }}
+            onClick={importFromFile}
+            title="Import diagram from JSON file"
+          >
+            📂 Import
+          </button>
+        </div>
 
         <p style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
           Click a part to place it. Click an object to select it.
