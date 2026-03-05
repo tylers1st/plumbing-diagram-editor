@@ -99,6 +99,9 @@ export default function App() {
   // Panning state for canvas
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  
+  // Zoom state (1 = 100%)
+  const [zoom, setZoom] = useState(1);
 
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDef(selected.partId) : null;
@@ -182,6 +185,27 @@ export default function App() {
     copySelected();
     pasteFromClipboard();
   };
+
+  // Handle zooming
+  const handleZoom = (direction: 'in' | 'out') => {
+    setZoom((prevZoom) => {
+      const newZoom = direction === 'in' ? prevZoom + 0.1 : prevZoom - 0.1;
+      // Clamp zoom between 0.5 (50%) and 3 (300%)
+      return Math.max(0.5, Math.min(3, newZoom));
+    });
+  };
+
+  // Apply zoom to all layers when zoom state changes
+  useEffect(() => {
+    if (stageRef.current) {
+      const layers = stageRef.current.getLayers();
+      layers.forEach((layer: any) => {
+        layer.scaleX(zoom);
+        layer.scaleY(zoom);
+        layer.draw();
+      });
+    }
+  }, [zoom]);
 
   // Export current diagram to JSON file
   const exportToFile = () => {
@@ -271,6 +295,16 @@ export default function App() {
         e.preventDefault();
         duplicateSelected();
       }
+      // + or = for zoom in
+      else if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        handleZoom('in');
+      }
+      // - for zoom out
+      else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        handleZoom('out');
+      }
       // R for rotate
       else if (e.key === "r" || e.key === "R") {
         rotateSelected();
@@ -290,12 +324,70 @@ export default function App() {
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)" }}>
-        {/* Sidebar */}
-        <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12 }}>
-          <h3 style={{ margin: "0 0 12px" }}>Parts</h3>
+      {/* Fixed Controls Panel */}
+      <div style={{ position: "fixed", left: 0, top: 0, width: "180px", height: "100vh", background: "var(--bg-primary)", borderRight: "1px solid var(--border-primary)", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, overflow: "auto", alignContent: "start", zIndex: 5 }}>
+          <div style={{ gridColumn: "1 / -1", fontSize: 11, opacity: 0.8, marginBottom: 0 }}>Zoom: {(zoom * 100).toFixed(0)}%</div>
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: 4 }}>
+            <button
+              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+              onClick={() => handleZoom('out')}
+              title="Zoom out (-)"
+            >
+              −
+            </button>
+            <button
+              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+              onClick={() => setZoom(1)}
+              title="Reset zoom to 100%"
+            >
+              Reset
+            </button>
+            <button
+              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+              onClick={() => handleZoom('in')}
+              title="Zoom in (+)"
+            >
+              +
+            </button>
+          </div>
+          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border-primary)", margin: "3px 0" }} />
+          <button
+            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+            onClick={exportToFile}
+            title="Export diagram to JSON file (Ctrl+S)"
+          >
+            💾 JSON
+          </button>
+          <button
+            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+            onClick={exportToPng}
+            title="Export diagram to PNG image (Ctrl+Shift+S)"
+          >
+            🖼️ PNG
+          </button>
+          <button
+            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+            onClick={importFromFile}
+            title="Import diagram from JSON file"
+          >
+            📂 Import
+          </button>
+          <button
+            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+            onClick={() => setInspectorVisible(!inspectorVisible)}
+            title="Toggle inspector panel"
+          >
+            {inspectorVisible ? "Hide" : "Show"}
+          </button>
+      </div>
 
-        {PARTS.map((p) => (
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", marginLeft: "180px" }}>
+        {/* Parts Panel */}
+        <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+          <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
+
+          <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
+            {PARTS.map((p) => (
           <button
             key={p.id}
             style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
@@ -303,55 +395,18 @@ export default function App() {
           >
             {p.name}
           </button>
-        ))}
-
-          <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border-primary)" }} />
-
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <button
-              style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-              onClick={exportToFile}
-              title="Export diagram to JSON file (Ctrl+S)"
-            >
-              💾 JSON
-            </button>
-            <button
-              style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-              onClick={exportToPng}
-              title="Export diagram to PNG image (Ctrl+Shift+S)"
-            >
-              🖼️ PNG
-            </button>
+            ))}
           </div>
-
-          <button
-            style={{ width: "100%", padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={importFromFile}
-            title="Import diagram from JSON file"
-          >
-            📂 Import
-          </button>
-
-          <p style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
-            Click a part to place it. Click an object to select it.
-          </p>
-          <button
-            style={{ width: "100%", padding: 10, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", marginTop: 12 }}
-            onClick={() => setInspectorVisible(!inspectorVisible)}
-            title="Toggle inspector panel"
-          >
-            {inspectorVisible ? "Hide" : "Show"} Inspector
-          </button>
         </div>
-
-      {/* Canvas */}
-      <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--canvas-bg)", overflow: "hidden" }}>
-        <Stage
-          ref={stageRef}
-          width={CANVAS_W}
-          height={CANVAS_H}
-          style={{ border: "1px solid var(--border-primary)", margin: 12, cursor: isPanning ? "grabbing" : "default" }}
-          onMouseDown={(e) => {
+      
+        {/* Canvas */}
+        <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--canvas-bg)", overflow: "hidden" }}>
+          <Stage
+            ref={stageRef}
+            width={CANVAS_W}
+            height={CANVAS_H}
+            style={{ border: "1px solid var(--border-primary)", margin: 12, cursor: isPanning ? "grabbing" : "default" }}
+            onMouseDown={(e) => {
             // Middle mouse button for panning
             if (e.evt.button === 1) {
               e.evt.preventDefault();
@@ -376,6 +431,13 @@ export default function App() {
           }}
           onMouseUp={() => {
             setIsPanning(false);
+          }}
+          onWheel={(e) => {
+            // Zoom with mouse wheel (Ctrl+Scroll)
+            if (e.evt.ctrlKey || e.evt.metaKey) {
+              e.evt.preventDefault();
+              handleZoom(e.evt.deltaY > 0 ? 'out' : 'in');
+            }
           }}
         >
           <Layer>
@@ -433,8 +495,8 @@ export default function App() {
             <Text x={10} y={10} text="Plumbing editor prototype: catalog + select + snap" fontSize={14} fill={isDark ? "#e5e7eb" : "#111827"} />
           </Layer>
         </Stage>
+        </div>
       </div>
-    </div>
 
       {/* Inspector - Overlay Panel */}
       {inspectorVisible && (
