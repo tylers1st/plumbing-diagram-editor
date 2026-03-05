@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Stage, Layer, Line, Rect, Text, Group } from "react-konva";
 import "./App.css";
 import { PARTS } from "./catalog/parts";
@@ -89,6 +89,16 @@ export default function App() {
   
   // Clipboard for copy/cut/paste operations
   const [clipboard, setClipboard] = useState<PlacedPart | null>(null);
+  
+  // Reference to the Konva Stage for PNG export
+  const stageRef = useRef<any>(null);
+  
+  // Inspector panel visibility
+  const [inspectorVisible, setInspectorVisible] = useState(true);
+  
+  // Panning state for canvas
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDef(selected.partId) : null;
@@ -209,6 +219,20 @@ export default function App() {
     input.click();
   };
 
+  // Export current diagram to PNG image
+  const exportToPng = () => {
+    if (!stageRef.current) return;
+    try {
+      const dataURL = stageRef.current.toDataURL();
+      const link = document.createElement("a");
+      link.href = dataURL;
+      link.download = `plumbing-diagram-${Date.now()}.png`;
+      link.click();
+    } catch (err) {
+      alert("Failed to export PNG. Please try again.");
+    }
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -217,10 +241,15 @@ export default function App() {
         e.preventDefault();
         undo();
       }
-      // Ctrl+S or Cmd+S for export
-      else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      // Ctrl+S or Cmd+S for export JSON
+      else if ((e.ctrlKey || e.metaKey) && e.key === "s" && !e.shiftKey) {
         e.preventDefault();
         exportToFile();
+      }
+      // Ctrl+Shift+S or Cmd+Shift+S for export PNG
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "S") {
+        e.preventDefault();
+        exportToPng();
       }
       // Ctrl+C or Cmd+C for copy
       else if ((e.ctrlKey || e.metaKey) && e.key === "c") {
@@ -264,7 +293,7 @@ export default function App() {
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)" }}>
         {/* Sidebar */}
         <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12 }}>
-        <h3 style={{ margin: "0 0 12px" }}>Parts</h3>
+          <h3 style={{ margin: "0 0 12px" }}>Parts</h3>
 
         {PARTS.map((p) => (
           <button
@@ -276,39 +305,77 @@ export default function App() {
           </button>
         ))}
 
-        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border-primary)" }} />
+          <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border-primary)" }} />
 
-        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <button
+              style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+              onClick={exportToFile}
+              title="Export diagram to JSON file (Ctrl+S)"
+            >
+              💾 JSON
+            </button>
+            <button
+              style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+              onClick={exportToPng}
+              title="Export diagram to PNG image (Ctrl+Shift+S)"
+            >
+              🖼️ PNG
+            </button>
+          </div>
+
           <button
-            style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={exportToFile}
-            title="Export diagram to JSON file"
-          >
-            💾 Export
-          </button>
-          <button
-            style={{ flex: 1, padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
+            style={{ width: "100%", padding: 10, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
             onClick={importFromFile}
             title="Import diagram from JSON file"
           >
             📂 Import
           </button>
+
+          <p style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
+            Click a part to place it. Click an object to select it.
+          </p>
+          <button
+            style={{ width: "100%", padding: 10, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", marginTop: 12 }}
+            onClick={() => setInspectorVisible(!inspectorVisible)}
+            title="Toggle inspector panel"
+          >
+            {inspectorVisible ? "Hide" : "Show"} Inspector
+          </button>
         </div>
 
-        <p style={{ marginTop: 12, fontSize: 12, opacity: 0.8 }}>
-          Click a part to place it. Click an object to select it.
-        </p>
-      </div>
-
       {/* Canvas */}
-      <div style={{ padding: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--canvas-bg)", overflow: "hidden" }}>
         <Stage
+          ref={stageRef}
           width={CANVAS_W}
           height={CANVAS_H}
-          style={{ border: "1px solid var(--border-primary)", background: "var(--canvas-bg)" }}
+          style={{ border: "1px solid var(--border-primary)", margin: 12, cursor: isPanning ? "grabbing" : "default" }}
           onMouseDown={(e) => {
+            // Middle mouse button for panning
+            if (e.evt.button === 1) {
+              e.evt.preventDefault();
+              setIsPanning(true);
+              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+            }
             // Click empty space to deselect
-            if (e.target === e.target.getStage()) setSelectedId(null);
+            else if (e.target === e.target.getStage()) {
+              setSelectedId(null);
+            }
+          }}
+          onMouseMove={(e) => {
+            if (isPanning && stageRef.current) {
+              const dx = e.evt.clientX - panStart.x;
+              const dy = e.evt.clientY - panStart.y;
+              const layers = stageRef.current.getLayers();
+              layers.forEach((layer: any) => {
+                layer.move({ x: dx, y: dy });
+              });
+              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+            }
+          }}
+          onMouseUp={() => {
+            setIsPanning(false);
           }}
         >
           <Layer>
@@ -367,9 +434,10 @@ export default function App() {
           </Layer>
         </Stage>
       </div>
-      </div>
+    </div>
 
       {/* Inspector - Overlay Panel */}
+      {inspectorVisible && (
       <div style={{ position: "fixed", right: 0, top: 0, width: 280, height: "100vh", background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)", padding: 12, overflow: "auto", zIndex: 10 }}>
         <h3 style={{ margin: "0 0 12px" }}>Inspector</h3>
 
@@ -422,6 +490,7 @@ export default function App() {
           </>
         )}
       </div>
+      )}
     </>
   );
 }
