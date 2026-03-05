@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Stage, Layer, Line, Rect, Text, Group } from "react-konva";
 import "./App.css";
 import { PARTS } from "./catalog/parts";
@@ -64,11 +64,28 @@ export default function App() {
   // Each item represents a draggable part's position + metadata.
   const [placed, setPlaced] = useState<PlacedPart[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  
+  // History stack for undo (stores previous states)
+  const [history, setHistory] = useState<PlacedPart[][]>([]);
 
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDef(selected.partId) : null;
 
+  // Save current state to history before making changes
+  const saveHistory = () => {
+    setHistory((prev) => [...prev, placed].slice(-20)); // Keep last 20 states
+  };
+
+  // Undo: restore previous state
+  const undo = () => {
+    if (history.length === 0) return;
+    const previous = history[history.length - 1];
+    setHistory((prev) => prev.slice(0, -1));
+    setPlaced(previous);
+  };
+
   const addPart = (def: PartDef) => {
+    saveHistory();
     const newItem: PlacedPart = {
       instanceId: uid(),
       partId: def.id,
@@ -83,14 +100,67 @@ export default function App() {
 
   const updateSelected = (patch: Partial<PlacedPart>) => {
     if (!selectedId) return;
+    saveHistory();
     setPlaced((prev) => prev.map((p) => (p.instanceId === selectedId ? { ...p, ...patch } : p)));
   };
 
   const deleteSelected = () => {
     if (!selected) return;
+    saveHistory();
     setPlaced((prev) => prev.filter((p) => p.instanceId !== selected.instanceId));
     setSelectedId(null);
   };
+
+  // Rotate selected part 90 degrees clockwise
+  const rotateSelected = () => {
+    if (!selected) return;
+    updateSelected({ rotation: (selected.rotation + 90) % 360 });
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Z or Cmd+Z for undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        undo();
+      }
+      // R for rotate
+      else if (e.key === "r" || e.key === "R") {
+        rotateSelected();
+      }
+      // Delete or Backspace for delete
+      else if (e.key === "Delete" || e.key === "Backspace") {
+        deleteSelected();
+      }
+      else if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        // Redo functionality could be implemented here by maintaining a separate redo stack
+        // For simplicity, it's not implemented in this prototype.
+      }
+      else if (e.key === "Escape") {
+        setSelectedId(null);
+      }
+      else if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+        e.preventDefault();
+        // Copy functionality could be implemented here by storing the selected part in a clipboard state
+        // For simplicity, it's not implemented in this prototype.
+      }
+      else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        e.preventDefault();
+        // Paste functionality could be implemented here by creating a new part based on the clipboard state
+        // For simplicity, it's not implemented in this prototype.
+      }
+      else if ((e.ctrlKey || e.metaKey) && e.key === "x") {
+        e.preventDefault();
+        // Cut functionality could be implemented here by copying the selected part to clipboard and then deleting it
+        // For simplicity, it's not implemented in this prototype.
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selected, history]); // Dependencies ensure handlers have current state
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "260px 1fr 280px", height: "100vh" }}>
@@ -146,6 +216,10 @@ export default function App() {
                   onMouseDown={(e) => {
                     e.cancelBubble = true;
                     setSelectedId(p.instanceId);
+                  }}
+                  onDragStart={() => {
+                    // Save state before drag for undo
+                    saveHistory();
                   }}
                   onDragEnd={(e) => {
                     // Snap to grid: convert px to grid units, round to nearest cell, then convert back to px.
