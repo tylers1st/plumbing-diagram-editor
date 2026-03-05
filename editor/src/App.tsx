@@ -8,7 +8,7 @@ const CANVAS_H = 700;
 
 function Grid() {
   const lines = useMemo(() => {
-    const l: JSX.Element[] = [];
+    const l: any[] = [];
 
     for (let x = 0; x <= CANVAS_W; x += GRID) {
       l.push(
