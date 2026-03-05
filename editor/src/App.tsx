@@ -5,8 +5,8 @@ import { PARTS } from "./catalog/parts";
 import type { PartDef } from "./catalog/parts";
 
 const GRID = 25;
-const CANVAS_W = 1100;
 const CANVAS_H = 700;
+const INSPECTOR_W = 280;
 
 // Hook to detect dark mode
 function useDarkMode() {
@@ -24,13 +24,12 @@ function useDarkMode() {
   return isDark;
 }
 
-function Grid({ isDark }: { isDark: boolean }) {
-  // Build the static grid lines once; the canvas dimensions are constants.
+function Grid({ isDark, width }: { isDark: boolean; width: number }) {
   const lines = useMemo(() => {
     const l: any[] = [];
     const gridColor = isDark ? "#404040" : "#e5e7eb";
 
-    for (let x = 0; x <= CANVAS_W; x += GRID) {
+    for (let x = 0; x <= width; x += GRID) {
       l.push(
         <Line
           key={`vx${x}`}
@@ -45,7 +44,7 @@ function Grid({ isDark }: { isDark: boolean }) {
       l.push(
         <Line
           key={`hy${y}`}
-          points={[0, y, CANVAS_W, y]}
+          points={[0, y, width, y]}
           stroke={gridColor}
           strokeWidth={1}
           listening={false}
@@ -53,7 +52,7 @@ function Grid({ isDark }: { isDark: boolean }) {
       );
     }
     return l;
-  }, [isDark]);
+  }, [isDark, width]);
 
   return <>{lines}</>;
 }
@@ -92,9 +91,13 @@ export default function App() {
   
   // Reference to the Konva Stage for PNG export
   const stageRef = useRef<any>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   
   // Inspector panel visibility
   const [inspectorVisible, setInspectorVisible] = useState(true);
+
+  // Stage width tracks available canvas container space
+  const [canvasWidth, setCanvasWidth] = useState(0);
   
   // Panning state for canvas
   const [isPanning, setIsPanning] = useState(false);
@@ -105,6 +108,7 @@ export default function App() {
 
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDef(selected.partId) : null;
+  const stageWidth = Math.max(GRID * 8, canvasWidth);
 
   // Save current state to history before making changes
   const saveHistory = () => {
@@ -185,6 +189,23 @@ export default function App() {
     copySelected();
     pasteFromClipboard();
   };
+
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+
+    const updateCanvasWidth = () => {
+      // Subtract inner wrapper padding (12px on each side).
+      setCanvasWidth(Math.max(0, el.clientWidth - 24));
+    };
+
+    updateCanvasWidth();
+
+    const observer = new ResizeObserver(updateCanvasWidth);
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, []);
 
   // Handle zooming
   const handleZoom = (direction: 'in' | 'out') => {
@@ -323,184 +344,301 @@ export default function App() {
   }, [selected, history, clipboard]); // Dependencies ensure handlers have current state
 
   return (
-    <>
-      {/* Fixed Controls Panel */}
-      <div style={{ position: "fixed", left: 0, top: 0, width: "180px", height: "100vh", background: "var(--bg-primary)", borderRight: "1px solid var(--border-primary)", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, overflow: "auto", alignContent: "start", zIndex: 5 }}>
-          <div style={{ gridColumn: "1 / -1", fontSize: 11, opacity: 0.8, marginBottom: 0 }}>Zoom: {(zoom * 100).toFixed(0)}%</div>
-          <div style={{ gridColumn: "1 / -1", display: "flex", gap: 4 }}>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => handleZoom('out')}
-              title="Zoom out (-)"
-            >
-              −
-            </button>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => setZoom(1)}
-              title="Reset zoom to 100%"
-            >
-              Reset
-            </button>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => handleZoom('in')}
-              title="Zoom in (+)"
-            >
-              +
-            </button>
-          </div>
-          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border-primary)", margin: "3px 0" }} />
+  <>
+    {/* Base layout: Controls | Catalog | Canvas */}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "180px 260px 1fr",
+        height: "100vh",
+        background: "var(--bg-primary)",
+        color: "var(--text-primary)",
+        overflow: "hidden",
+      }}
+    >
+      {/* Controls Panel (left) */}
+      <div
+        style={{
+          height: "100vh",
+          background: "var(--bg-primary)",
+          borderRight: "1px solid var(--border-primary)",
+          padding: 12,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 6,
+          overflow: "auto",
+          alignContent: "start",
+        }}
+      >
+        <div style={{ gridColumn: "1 / -1", fontSize: 11, opacity: 0.8, marginBottom: 0 }}>
+          Zoom: {(zoom * 100).toFixed(0)}%
+        </div>
+
+        <div style={{ gridColumn: "1 / -1", display: "flex", gap: 4 }}>
           <button
-            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={exportToFile}
-            title="Export diagram to JSON file (Ctrl+S)"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => handleZoom("out")}
+            title="Zoom out (-)"
           >
-            💾 JSON
+            −
           </button>
+
           <button
-            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={exportToPng}
-            title="Export diagram to PNG image (Ctrl+Shift+S)"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => setZoom(1)}
+            title="Reset zoom to 100%"
           >
-            🖼️ PNG
+            Reset
           </button>
+
           <button
-            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={importFromFile}
-            title="Import diagram from JSON file"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => handleZoom("in")}
+            title="Zoom in (+)"
           >
-            📂 Import
+            +
           </button>
-          <button
-            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-            onClick={() => setInspectorVisible(!inspectorVisible)}
-            title="Toggle inspector panel"
-          >
-            {inspectorVisible ? "Hide" : "Show"}
-          </button>
+        </div>
+
+        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border-primary)", margin: "3px 0" }} />
+
+        <button
+          style={{
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={exportToFile}
+          title="Export diagram to JSON file (Ctrl+S)"
+        >
+          💾 JSON
+        </button>
+
+        <button
+          style={{
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={exportToPng}
+          title="Export diagram to PNG image (Ctrl+Shift+S)"
+        >
+          🖼️ PNG
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={importFromFile}
+          title="Import diagram from JSON file"
+        >
+          📂 Import
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+            color: "var(--text-primary)",
+          }}
+          onClick={() => setInspectorVisible(!inspectorVisible)}
+          title="Toggle inspector panel"
+        >
+          {inspectorVisible ? "Hide" : "Show"} Inspector
+        </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", marginLeft: "0px" }}>
-        {/* Parts Panel */}
-        <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-          <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
+      {/* Catalog Panel (middle) */}
+      <div
+        style={{
+          borderRight: "1px solid var(--border-primary)",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          height: "100vh",
+          overflow: "hidden",
+          background: "var(--bg-primary)",
+        }}
+      >
+        <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
 
-          <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
-            {PARTS.map((p) => (
-          <button
-            key={p.id}
-            style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
-            onClick={() => addPart(p)}
-          >
-            {p.name}
-          </button>
-            ))}
-          </div>
+        <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
+          {PARTS.map((p) => (
+            <button
+              key={p.id}
+              style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
+              onClick={() => addPart(p)}
+            >
+              {p.name}
+            </button>
+          ))}
         </div>
-      
-        {/* Canvas */}
-        <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--canvas-bg)", overflow: "hidden" }}>
+      </div>
+
+      {/* Canvas (right) */}
+      <div
+        ref={canvasWrapRef}
+        style={{ height: "100vh", background: "var(--canvas-bg)", overflow: "hidden", paddingRight: inspectorVisible ? INSPECTOR_W : 0 }}
+      >
+        {/* Prefer padding around the Stage rather than Stage margin */}
+        <div style={{ padding: 12 }}>
           <Stage
             ref={stageRef}
-            width={CANVAS_W}
+            width={stageWidth}
             height={CANVAS_H}
-            style={{ border: "1px solid var(--border-primary)", margin: 12, cursor: isPanning ? "grabbing" : "default" }}
+            style={{
+              border: "1px solid var(--border-primary)",
+              cursor: isPanning ? "grabbing" : "default",
+              background: "var(--canvas-bg)",
+            }}
             onMouseDown={(e) => {
-            // Middle mouse button for panning
-            if (e.evt.button === 1) {
-              e.evt.preventDefault();
-              setIsPanning(true);
-              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
-            }
-            // Click empty space to deselect
-            else if (e.target === e.target.getStage()) {
-              setSelectedId(null);
-            }
-          }}
-          onMouseMove={(e) => {
-            if (isPanning && stageRef.current) {
-              const dx = e.evt.clientX - panStart.x;
-              const dy = e.evt.clientY - panStart.y;
-              const layers = stageRef.current.getLayers();
-              layers.forEach((layer: any) => {
-                layer.move({ x: dx, y: dy });
-              });
-              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
-            }
-          }}
-          onMouseUp={() => {
-            setIsPanning(false);
-          }}
-          onWheel={(e) => {
-            // Zoom with mouse wheel (Ctrl+Scroll)
-            if (e.evt.ctrlKey || e.evt.metaKey) {
-              e.evt.preventDefault();
-              handleZoom(e.evt.deltaY > 0 ? 'out' : 'in');
-            }
-          }}
-        >
-          <Layer>
-            <Grid isDark={isDark} />
-          </Layer>
+              if (e.evt.button === 1) {
+                e.evt.preventDefault();
+                setIsPanning(true);
+                setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+              } else if (e.target === e.target.getStage()) {
+                setSelectedId(null);
+              }
+            }}
+            onMouseMove={(e) => {
+              if (isPanning && stageRef.current) {
+                const dx = e.evt.clientX - panStart.x;
+                const dy = e.evt.clientY - panStart.y;
+                const layers = stageRef.current.getLayers();
+                layers.forEach((layer: any) => layer.move({ x: dx, y: dy }));
+                setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+              }
+            }}
+            onMouseUp={() => setIsPanning(false)}
+            onWheel={(e) => {
+              if (e.evt.ctrlKey || e.evt.metaKey) {
+                e.evt.preventDefault();
+                handleZoom(e.evt.deltaY > 0 ? "out" : "in");
+              }
+            }}
+          >
+            <Layer>
+              <Grid isDark={isDark} width={stageWidth} />
+            </Layer>
 
-          <Layer>
-            {placed.map((p) => {
-              const def = getPartDef(p.partId);
-              const isSel = p.instanceId === selectedId;
+            <Layer>
+              {placed.map((p) => {
+                const def = getPartDef(p.partId);
+                const isSel = p.instanceId === selectedId;
 
-              const wPx = def.w * GRID;
-              const hPx = def.h * GRID;
+                const wPx = def.w * GRID;
+                const hPx = def.h * GRID;
 
-              return (
-                <Group
-                  key={p.instanceId}
-                  x={p.x}
-                  y={p.y}
-                  rotation={p.rotation}
-                  draggable
-                  onMouseDown={(e) => {
-                    e.cancelBubble = true;
-                    setSelectedId(p.instanceId);
-                  }}
-                  onDragStart={() => {
-                    // Save state before drag for undo
-                    saveHistory();
-                  }}
-                  onDragEnd={(e) => {
-                    // Snap to grid: convert px to grid units, round to nearest cell, then convert back to px.
-                    const nx = Math.round(e.target.x() / GRID) * GRID;
-                    const ny = Math.round(e.target.y() / GRID) * GRID;
+                return (
+                  <Group
+                    key={p.instanceId}
+                    x={p.x}
+                    y={p.y}
+                    rotation={p.rotation}
+                    draggable
+                    onMouseDown={(e) => {
+                      e.cancelBubble = true;
+                      setSelectedId(p.instanceId);
+                    }}
+                    onDragStart={saveHistory}
+                    onDragEnd={(e) => {
+                      const nx = Math.round(e.target.x() / GRID) * GRID;
+                      const ny = Math.round(e.target.y() / GRID) * GRID;
+                      e.target.position({ x: nx, y: ny });
 
-                    // Immediately update the visual position to prevent async state update delay
-                    e.target.position({ x: nx, y: ny });
+                      setPlaced((prev) =>
+                        prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: nx, y: ny } : item))
+                      );
+                    }}
+                  >
+                    <Rect
+                      width={wPx}
+                      height={hPx}
+                      fill={isDark ? "#2563eb" : "#93c5fd"}
+                      stroke={isSel ? "#ef4444" : isDark ? "#e5e7eb" : "#1f2937"}
+                      strokeWidth={isSel ? 3 : 1}
+                    />
+                    <Text
+                      x={6}
+                      y={6}
+                      text={`${def.name}\n${p.size}"`}
+                      fontSize={12}
+                      fill={isDark ? "#e5e7eb" : "#111827"}
+                    />
+                  </Group>
+                );
+              })}
 
-                    setPlaced((prev) =>
-                      prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: nx, y: ny } : item))
-                    );
-                  }}
-                >
-                  <Rect
-                    width={wPx}
-                    height={hPx}
-                    fill={isDark ? "#2563eb" : "#93c5fd"}
-                    stroke={isSel ? "#ef4444" : (isDark ? "#e5e7eb" : "#1f2937")}
-                    strokeWidth={isSel ? 3 : 1}
-                  />
-                  <Text x={6} y={6} text={`${def.name}\n${p.size}"`} fontSize={12} fill={isDark ? "#e5e7eb" : "#111827"} />
-                </Group>
-              );
-            })}
-
-            <Text x={10} y={10} text="Plumbing editor prototype: catalog + select + snap" fontSize={14} fill={isDark ? "#e5e7eb" : "#111827"} />
-          </Layer>
-        </Stage>
+              <Text
+                x={10}
+                y={10}
+                text="Plumbing editor prototype: catalog + select + snap"
+                fontSize={14}
+                fill={isDark ? "#e5e7eb" : "#111827"}
+              />
+            </Layer>
+          </Stage>
         </div>
       </div>
+    </div>
 
-      {/* Inspector - Overlay Panel */}
-      {inspectorVisible && (
-      <div style={{ position: "fixed", right: 0, top: 0, width: 280, height: "100vh", background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)", padding: 12, overflow: "auto", zIndex: 10 }}>
+    {/* Inspector - Overlay Panel (does not affect layout width) */}
+    {inspectorVisible && (
+      <div
+        style={{
+          position: "fixed",
+          right: 0,
+          top: 0,
+          width: 280,
+          height: "100vh",
+          background: "var(--bg-primary)",
+          borderLeft: "1px solid var(--border-primary)",
+          padding: 12,
+          overflow: "auto",
+          zIndex: 10,
+        }}
+      >
         <h3 style={{ margin: "0 0 12px" }}>Inspector</h3>
 
         {!selected || !selectedDef ? (
@@ -552,7 +690,7 @@ export default function App() {
           </>
         )}
       </div>
-      )}
-    </>
+    )}
+  </>
   );
 }
