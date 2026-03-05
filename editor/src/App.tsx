@@ -1,8 +1,9 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Stage, Layer, Line, Rect, Text, Group } from "react-konva";
+import { Stage, Layer, Line, Rect, Text, Group, Circle, Image as KonvaImage } from "react-konva";
+import useImage from "use-image";
 import "./App.css";
 import { PARTS } from "./catalog/parts";
-import type { PartDef } from "./catalog/parts";
+import type { PartDef, Port } from "./catalog/parts";
 
 const GRID = 25;
 const CANVAS_H = 700;
@@ -22,6 +23,17 @@ function useDarkMode() {
   }, []);
 
   return isDark;
+}
+
+// Component to render a part with optional image
+function PartImage({ imageSrc, width, height }: { imageSrc?: string; width: number; height: number }) {
+  const [image] = useImage(imageSrc || "");
+  
+  if (imageSrc && image) {
+    return <KonvaImage image={image} width={width} height={height} />;
+  }
+  
+  return null; // No image, geometry is invisible
 }
 
 function Grid({ isDark, width }: { isDark: boolean; width: number }) {
@@ -74,6 +86,63 @@ function getPartDef(partId: string): PartDef {
   const p = PARTS.find((x) => x.id === partId);
   if (!p) throw new Error(`Unknown partId: ${partId}`);
   return p;
+}
+
+// Calculate world coordinates of a port on a placed part
+// accounting for position and rotation
+function getPortWorldCoords(
+  placed: PlacedPart,
+  port: Port
+): { x: number; y: number } {
+  // Rotation in degrees
+  const angleRad = (placed.rotation * Math.PI) / 180;
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+
+  // Port coordinates are relative to the Group's origin (top-left)
+  // Konva rotates around the origin, so we rotate the port coords around (0,0)
+  const rotX = port.x * cos - port.y * sin;
+  const rotY = port.x * sin + port.y * cos;
+
+  // World coords = part position + rotated port offset
+  return {
+    x: placed.x + rotX,
+    y: placed.y + rotY,
+  };
+}
+
+// Find nearest port to a given position from all parts except the dragging one
+function findNearestPort(
+  x: number,
+  y: number,
+  placed: PlacedPart[],
+  exceptInstanceId: string,
+  snapDistance: number = 100
+): { partInstanceId: string; port: Port; distance: number } | null {
+  let nearest: {
+    partInstanceId: string;
+    port: Port;
+    distance: number;
+  } | null = null;
+
+  for (const part of placed) {
+    if (part.instanceId === exceptInstanceId) continue;
+    const def = getPartDef(part.partId);
+    if (!def.ports) continue;
+
+    for (const port of def.ports) {
+      const { x: px, y: py } = getPortWorldCoords(part, port);
+      const dx = px - x;
+      const dy = py - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < snapDistance && (!nearest || dist < nearest.distance)) {
+        nearest = { partInstanceId: part.instanceId, port, distance: dist };
+      }
+    }
+  }
+
+  return nearest;
 }
 
 export default function App() {
@@ -583,29 +652,133 @@ export default function App() {
                     }}
                     onDragStart={saveHistory}
                     onDragEnd={(e) => {
-                      const nx = Math.round(e.target.x() / GRID) * GRID;
-                      const ny = Math.round(e.target.y() / GRID) * GRID;
-                      e.target.position({ x: nx, y: ny });
+                      const dragX = e.target.x();
+                      const dragY = e.target.y();
+                      
+                      const def = getPartDef(p.partId);
+                      const ports = def.ports || [];
+                      
+                      // Find nearest port globally (excluding this part)
+                      // Use the center of this part as the search origin
+                      const nearest = findNearestPort(
+                        dragX + (def.w * GRID) / 2,
+                        dragY + (def.h * GRID) / 2,
+                        placed,
+                        p.instanceId
+                      );
+                      
+                      let finalX = dragX;
+                      let finalY = dragY;
+                      
+                      if (nearest) {
+                        // Find the closest port on this part to the target port
+                        const targetPart = placed.find(
+                          (part) => part.instanceId === nearest.partInstanceId
+                        );
+                        
+                        if (targetPart) {
+                          const targetPortWorld = getPortWorldCoords(
+                            targetPart,
+                            nearest.port
+                          );
+                          
+                          // Find which of our ports is closest to the target
+                          let bestOwnPort = ports[0];
+                          let bestDistance = Infinity;
+                          
+                          for (const ownPort of ports) {
+                            const ownPortWorld = getPortWorldCoords(
+                              { ...p, x: dragX, y: dragY },
+                              ownPort
+                            );
+                            const dist = Math.sqrt(
+                              Math.pow(ownPortWorld.x - targetPortWorld.x, 2) +
+                              Math.pow(ownPortWorld.y - targetPortWorld.y, 2)
+                            );
+                            if (dist < bestDistance) {
+                              bestDistance = dist;
+                              bestOwnPort = ownPort;
+                            }
+                          }
+                          
+                          if (bestOwnPort) {
+                            // Get the port's position in world space with current drag position
+                            const ownPortWorld = getPortWorldCoords(
+                              { ...p, x: dragX, y: dragY },
+                              bestOwnPort
+                            );
+                            
+                            // Calculate the offset from the part's top-left position to the port in world space
+                            // This offset is rotation-dependent, so we account for it properly
+                            const portOffsetFromPartX = ownPortWorld.x - dragX;
+                            const portOffsetFromPartY = ownPortWorld.y - dragY;
+                            
+                            // Position the part so that its port aligns with the target port
+                            finalX = targetPortWorld.x - portOffsetFromPartX;
+                            finalY = targetPortWorld.y - portOffsetFromPartY;
+                          }
+                        }
+                      } else {
+                        // Fall back to grid snap only if NO nearby ports
+                        finalX = Math.round(dragX / GRID) * GRID;
+                        finalY = Math.round(dragY / GRID) * GRID;
+                      }
+
+                      e.target.position({ x: finalX, y: finalY });
 
                       setPlaced((prev) =>
-                        prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: nx, y: ny } : item))
+                        prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: finalX, y: finalY } : item))
                       );
                     }}
                   >
+                    {/* Invisible bounding box for selection */}
                     <Rect
                       width={wPx}
                       height={hPx}
-                      fill={isDark ? "#2563eb" : "#93c5fd"}
-                      stroke={isSel ? "#ef4444" : isDark ? "#e5e7eb" : "#1f2937"}
-                      strokeWidth={isSel ? 3 : 1}
+                      fill="transparent"
+                      stroke={isSel ? "#ef4444" : "transparent"}
+                      strokeWidth={isSel ? 2 : 0}
                     />
-                    <Text
-                      x={6}
-                      y={6}
-                      text={`${def.name}\n${p.size}"`}
-                      fontSize={12}
-                      fill={isDark ? "#e5e7eb" : "#111827"}
-                    />
+                    
+                    {/* Part image (if available) */}
+                    <PartImage imageSrc={def.imageSrc} width={wPx} height={hPx} />
+                    
+                    {/* Fallback: visible rect only if no image */}
+                    {!def.imageSrc && (
+                      <Rect
+                        width={wPx}
+                        height={hPx}
+                        fill={isDark ? "#2563eb" : "#93c5fd"}
+                        stroke={isDark ? "#e5e7eb" : "#1f2937"}
+                        strokeWidth={1}
+                      />
+                    )}
+                    
+                    {/* Text label (only show if no image or when selected) */}
+                    {(!def.imageSrc || isSel) && (
+                      <Text
+                        x={6}
+                        y={6}
+                        text={`${def.name}\n${p.size}"`}
+                        fontSize={12}
+                        fill={isDark ? "#e5e7eb" : "#111827"}
+                        opacity={def.imageSrc ? 0.7 : 1}
+                      />
+                    )}
+                    
+                    {/* Ports - invisible but still functional for snapping */}
+                    {def.ports?.map((port) => (
+                      <Circle
+                        key={port.id}
+                        x={port.x}
+                        y={port.y}
+                        radius={4}
+                        fill={isDark ? "#60a5fa" : "#3b82f6"}
+                        stroke={isDark ? "#ffffff" : "#1f2937"}
+                        strokeWidth={1}
+                        opacity={def.imageSrc ? 0 : 0.6}
+                      />
+                    ))}
                   </Group>
                 );
               })}
