@@ -152,6 +152,9 @@ export default function App() {
                     const nx = Math.round(e.target.x() / GRID) * GRID;
                     const ny = Math.round(e.target.y() / GRID) * GRID;
 
+                    // Immediately update the visual position to prevent async state update delay
+                    e.target.position({ x: nx, y: ny });
+
                     setPlaced((prev) =>
                       prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: nx, y: ny } : item))
                     );
