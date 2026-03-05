@@ -82,11 +82,7 @@ function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-function getPartDef(partId: string): PartDef {
-  const p = PARTS.find((x) => x.id === partId);
-  if (!p) throw new Error(`Unknown partId: ${partId}`);
-  return p;
-}
+
 
 // Calculate world coordinates of a port on a placed part
 // accounting for position and rotation
@@ -117,6 +113,7 @@ function findNearestPort(
   y: number,
   placed: PlacedPart[],
   exceptInstanceId: string,
+  getPartDefFn: (id: string) => PartDef,
   snapDistance: number = 100
 ): { partInstanceId: string; port: Port; distance: number } | null {
   let nearest: {
@@ -127,7 +124,7 @@ function findNearestPort(
 
   for (const part of placed) {
     if (part.instanceId === exceptInstanceId) continue;
-    const def = getPartDef(part.partId);
+    const def = getPartDefFn(part.partId);
     if (!def.ports) continue;
 
     for (const port of def.ports) {
@@ -175,8 +172,31 @@ export default function App() {
   // Zoom state (1 = 100%)
   const [zoom, setZoom] = useState(1);
 
+  // Custom parts (user-created)
+  const [customParts, setCustomParts] = useState<PartDef[]>([]);
+  
+  // Modal state for creating new parts
+  const [showNewPartModal, setShowNewPartModal] = useState(false);
+  const [newPartForm, setNewPartForm] = useState({
+    name: "",
+    kind: "fitting" as const,
+    w: 2,
+    h: 2,
+    sizes: "2,3,4,6",
+  });
+
+  // Merge static and custom parts
+  const allParts = [...PARTS, ...customParts];
+  
+  // Override getPartDef to search custom parts too
+  const getPartDefEx = (partId: string): PartDef => {
+    const p = allParts.find((x) => x.id === partId);
+    if (!p) throw new Error(`Unknown partId: ${partId}`);
+    return p;
+  };
+
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
-  const selectedDef = selected ? getPartDef(selected.partId) : null;
+  const selectedDef = selected ? getPartDefEx(selected.partId) : null;
   const stageWidth = Math.max(GRID * 8, canvasWidth);
 
   // Save current state to history before making changes
@@ -204,6 +224,28 @@ export default function App() {
     };
     setPlaced((prev) => [...prev, newItem]);
     setSelectedId(newItem.instanceId);
+  };
+
+  const createNewPart = () => {
+    const sizes = newPartForm.sizes.split(",").map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+    
+    const newPart: PartDef = {
+      id: `custom_${uid()}`,
+      name: newPartForm.name || "Unnamed Part",
+      kind: newPartForm.kind,
+      sizes: sizes.length > 0 ? sizes : [2],
+      w: Math.max(1, newPartForm.w),
+      h: Math.max(1, newPartForm.h),
+      ports: [
+        { id: "in", x: 0, y: newPartForm.h * GRID / 2 },
+        { id: "out", x: newPartForm.w * GRID, y: newPartForm.h * GRID / 2 },
+      ],
+      meta: { custom: true },
+    };
+    
+    setCustomParts((prev) => [...prev, newPart]);
+    setShowNewPartModal(false);
+    setNewPartForm({ name: "", kind: "fitting", w: 2, h: 2, sizes: "2,3,4,6" });
   };
 
   const updateSelected = (patch: Partial<PlacedPart>) => {
@@ -551,6 +593,22 @@ export default function App() {
             border: "1px solid var(--border-primary)",
             color: "var(--text-primary)",
           }}
+          onClick={() => setShowNewPartModal(true)}
+          title="Create a new part definition"
+        >
+          ➕ New Part
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+            color: "var(--text-primary)",
+          }}
           onClick={() => setInspectorVisible(!inspectorVisible)}
           title="Toggle inspector panel"
         >
@@ -573,7 +631,7 @@ export default function App() {
         <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
 
         <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
-          {PARTS.map((p) => (
+          {allParts.map((p) => (
             <button
               key={p.id}
               style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
@@ -633,7 +691,7 @@ export default function App() {
 
             <Layer>
               {placed.map((p) => {
-                const def = getPartDef(p.partId);
+                const def = getPartDefEx(p.partId);
                 const isSel = p.instanceId === selectedId;
 
                 const wPx = def.w * GRID;
@@ -655,7 +713,7 @@ export default function App() {
                       const dragX = e.target.x();
                       const dragY = e.target.y();
                       
-                      const def = getPartDef(p.partId);
+                      const def = getPartDefEx(p.partId);
                       const ports = def.ports || [];
                       
                       // Find nearest port globally (excluding this part)
@@ -664,7 +722,8 @@ export default function App() {
                         dragX + (def.w * GRID) / 2,
                         dragY + (def.h * GRID) / 2,
                         placed,
-                        p.instanceId
+                        p.instanceId,
+                        getPartDefEx
                       );
                       
                       let finalX = dragX;
@@ -862,6 +921,177 @@ export default function App() {
             </pre>
           </>
         )}
+      </div>
+    )}
+
+    {/* New Part Modal */}
+    {showNewPartModal && (
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 100,
+        }}
+        onClick={() => setShowNewPartModal(false)}
+      >
+        <div
+          style={{
+            background: "var(--bg-primary)",
+            border: "1px solid var(--border-primary)",
+            borderRadius: "8px",
+            padding: 20,
+            maxWidth: "400px",
+            maxHeight: "90vh",
+            overflow: "auto",
+            color: "var(--text-primary)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 style={{ margin: "0 0 16px" }}>Create New Part</h2>
+          
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+              Part Name
+            </label>
+            <input
+              type="text"
+              value={newPartForm.name}
+              onChange={(e) => setNewPartForm({ ...newPartForm, name: e.target.value })}
+              placeholder="e.g., T-Junction"
+              style={{
+                width: "100%",
+                padding: 8,
+                border: "1px solid var(--border-primary)",
+                background: "var(--bg-secondary)",
+                color: "var(--text-primary)",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+              Type
+            </label>
+            <select
+              value={newPartForm.kind}
+              onChange={(e) => setNewPartForm({ ...newPartForm, kind: e.target.value as any })}
+              style={{
+                width: "100%",
+                padding: 8,
+                border: "1px solid var(--border-primary)",
+                background: "var(--bg-secondary)",
+                color: "var(--text-primary)",
+                boxSizing: "border-box",
+              }}
+            >
+              <option value="pipe">Pipe</option>
+              <option value="fitting">Fitting</option>
+              <option value="fixture">Fixture</option>
+            </select>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+                Width (grid cells)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={newPartForm.w}
+                onChange={(e) => setNewPartForm({ ...newPartForm, w: parseInt(e.target.value) || 2 })}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  border: "1px solid var(--border-primary)",
+                  background: "var(--bg-secondary)",
+                  color: "var(--text-primary)",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+                Height (grid cells)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={newPartForm.h}
+                onChange={(e) => setNewPartForm({ ...newPartForm, h: parseInt(e.target.value) || 2 })}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  border: "1px solid var(--border-primary)",
+                  background: "var(--bg-secondary)",
+                  color: "var(--text-primary)",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+              Available Sizes (comma-separated)
+            </label>
+            <input
+              type="text"
+              value={newPartForm.sizes}
+              onChange={(e) => setNewPartForm({ ...newPartForm, sizes: e.target.value })}
+              placeholder="e.g., 2,3,4,6"
+              style={{
+                width: "100%",
+                padding: 8,
+                border: "1px solid var(--border-primary)",
+                background: "var(--bg-secondary)",
+                color: "var(--text-primary)",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={createNewPart}
+              style={{
+                flex: 1,
+                padding: 10,
+                background: "var(--bg-accent)",
+                border: "1px solid var(--border-accent)",
+                color: "var(--text-primary)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Create
+            </button>
+            <button
+              onClick={() => setShowNewPartModal(false)}
+              style={{
+                flex: 1,
+                padding: 10,
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-primary)",
+                color: "var(--text-primary)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       </div>
     )}
   </>
