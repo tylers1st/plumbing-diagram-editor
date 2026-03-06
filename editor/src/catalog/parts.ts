@@ -159,7 +159,7 @@ export const PARTS: PartDef[] = [
         kind: "hub",
       },
     ],
-    icon: "/images/ci-quarter-bend.svg",
+    imageSrc: "/images/CI-Quarter-Bend.png",
     meta: { 
       material: "cast-iron",
       type: "quarter-bend",
