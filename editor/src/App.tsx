@@ -188,6 +188,12 @@ export default function App() {
   // Ports visibility toggle
   const [portsVisible, setPortsVisible] = useState(false);
 
+  // Port edit mode - tracks which part's ports are being edited
+  const [editingPortsPartId, setEditingPortsPartId] = useState<string | null>(null);
+
+  // Custom port positions per instance (for editing)
+  const [customPorts, setCustomPorts] = useState<Record<string, Port[]>>({});
+
   // Stage width tracks available canvas container space
   const [canvasWidth, setCanvasWidth] = useState(0);
   
@@ -224,6 +230,14 @@ export default function App() {
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
   const selectedDef = selected ? getPartDefEx(selected.partId) : null;
   const stageWidth = Math.max(GRID * 8, canvasWidth);
+
+  // Get ports considering custom edits
+  const getPortsWithCustom = (placedPart: PlacedPart, def: PartDef): Port[] => {
+    if (customPorts[placedPart.instanceId]) {
+      return customPorts[placedPart.instanceId];
+    }
+    return getResolvedPorts(placedPart, def);
+  };
 
   // Save current state to history before making changes
   const saveHistory = () => {
@@ -868,18 +882,39 @@ export default function App() {
                     )}
                     
                     {/* Ports - invisible but still functional for snapping */}
-                    {getResolvedPorts(p, def).map((port) => (
-                      <Circle
-                        key={port.id}
-                        x={port.x}
-                        y={port.y}
-                        radius={4 * scaleFactor}
-                        fill={isDark ? "#60a5fa" : "#3b82f6"}
-                        stroke={isDark ? "#ffffff" : "#1f2937"}
-                        strokeWidth={1}
-                        opacity={portsVisible ? 0.6 : 0}
-                      />
-                    ))}
+                    {getResolvedPorts(p, def).map((port) => {
+                      const isEditingThisPart = editingPortsPartId === p.instanceId;
+                      // Use custom ports if in edit mode, otherwise use original
+                      const displayPort = customPorts[p.instanceId]?.find(cp => cp.id === port.id) || port;
+                      return (
+                        <Circle
+                          key={port.id}
+                          x={displayPort.x}
+                          y={displayPort.y}
+                          radius={isEditingThisPart ? 6 * scaleFactor : 4 * scaleFactor}
+                          fill={isEditingThisPart ? "#ff6b6b" : isDark ? "#60a5fa" : "#3b82f6"}
+                          stroke={isDark ? "#ffffff" : "#1f2937"}
+                          strokeWidth={isEditingThisPart ? 2 : 1}
+                          opacity={portsVisible || isEditingThisPart ? 0.8 : 0}
+                          draggable={isEditingThisPart}
+                          onDragEnd={(e) => {
+                            if (isEditingThisPart) {
+                              const newX = e.target.x();
+                              const newY = e.target.y();
+                              setCustomPorts((prev) => {
+                                const instancePorts = prev[p.instanceId] || getResolvedPorts(p, def);
+                                return {
+                                  ...prev,
+                                  [p.instanceId]: instancePorts.map((pt) =>
+                                    pt.id === port.id ? { ...pt, x: newX, y: newY } : pt
+                                  ),
+                                };
+                              });
+                            }
+                          }}
+                        />
+                      );
+                    })}
                   </Group>
                 );
               })}
@@ -990,6 +1025,36 @@ export default function App() {
                 title="Toggle port visibility"
               >
                 {portsVisible ? "👁️ Hide ports" : "🙈 Show ports"}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <button
+                style={{
+                  padding: 8,
+                  width: "100%",
+                  background: editingPortsPartId === selected.instanceId ? "#ff6b6b" : "var(--bg-secondary)",
+                  border: editingPortsPartId === selected.instanceId ? "1px solid #ff4444" : "1px solid var(--border-primary)",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                }}
+                onClick={() => {
+                  if (editingPortsPartId === selected.instanceId) {
+                    setEditingPortsPartId(null);
+                  } else {
+                    // Initialize custom ports from current resolved ports
+                    const currentPorts = getResolvedPorts(selected, selectedDef!);
+                    setCustomPorts((prev) => ({
+                      ...prev,
+                      [selected.instanceId]: currentPorts,
+                    }));
+                    setEditingPortsPartId(selected.instanceId);
+                    setPortsVisible(true); // Show ports when entering edit mode
+                  }
+                }}
+                title="Enter port edit mode - drag ports to reposition"
+              >
+                {editingPortsPartId === selected.instanceId ? "✓ Exit edit mode" : "✎ Edit ports"}
               </button>
             </div>
 
