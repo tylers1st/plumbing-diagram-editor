@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { Stage, Layer, Line, Rect, Text, Group, Circle, Image as KonvaImage } from "react-konva";
 import useImage from "use-image";
 import "./App.css";
-import { PARTS } from "./catalog/parts";
+import { PARTS, evaluatePortExpr, getVariant } from "./catalog/parts";
 import type { PartDef, Port } from "./catalog/parts";
 
 const GRID = 25;
@@ -82,7 +82,29 @@ function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
+/**
+ * Get ports for a placed part, evaluating expressions if using new format.
+ * Returns legacy Port[] format for consistent handling.
+ */
+function getResolvedPorts(placed: PlacedPart, def: PartDef): Port[] {
+  // If part uses new portDefs format, evaluate expressions for selected variant
+  if (def.portDefs && def.portDefs.length > 0 && def.variants && def.variants.length > 0) {
+    const variant = getVariant(def, placed.size);
+    if (variant) {
+      // Evaluate port expressions to pixel coordinates
+      // 1 inch = 50 pixels (conversion factor)
+      const INCH_TO_PX = 50;
+      return def.portDefs.map((pd) => ({
+        id: pd.id,
+        x: evaluatePortExpr(pd.xExpr, variant.dims) * INCH_TO_PX,
+        y: evaluatePortExpr(pd.yExpr, variant.dims) * INCH_TO_PX,
+      }));
+    }
+  }
 
+  // Fall back to legacy hardcoded ports
+  return def.ports || [];
+}
 
 // Calculate world coordinates of a port on a placed part
 // accounting for position and rotation
@@ -125,9 +147,10 @@ function findNearestPort(
   for (const part of placed) {
     if (part.instanceId === exceptInstanceId) continue;
     const def = getPartDefFn(part.partId);
-    if (!def.ports) continue;
+    const ports = getResolvedPorts(part, def);
+    if (!ports || ports.length === 0) continue;
 
-    for (const port of def.ports) {
+    for (const port of ports) {
       const { x: px, y: py } = getPortWorldCoords(part, port);
       const dx = px - x;
       const dy = py - y;
@@ -714,7 +737,7 @@ export default function App() {
                       const dragY = e.target.y();
                       
                       const def = getPartDefEx(p.partId);
-                      const ports = def.ports || [];
+                      const ports = getResolvedPorts(p, def);
                       
                       // Find nearest port globally (excluding this part)
                       // Use the center of this part as the search origin
@@ -826,7 +849,7 @@ export default function App() {
                     )}
                     
                     {/* Ports - invisible but still functional for snapping */}
-                    {def.ports?.map((port) => (
+                    {getResolvedPorts(p, def).map((port) => (
                       <Circle
                         key={port.id}
                         x={port.x}
@@ -896,6 +919,31 @@ export default function App() {
                 ))}
               </select>
             </div>
+
+            {/* Show dimensional data if available */}
+            {selectedDef.variants && selectedDef.variants.length > 0 && (() => {
+              const variant = getVariant(selectedDef, selected.size);
+              if (variant) {
+                return (
+                  <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.8 }}>
+                    <div style={{ opacity: 0.75, marginBottom: 4 }}>Dimensions</div>
+                    {Object.entries(variant.dims).map(([key, value]) => (
+                      <div key={key} style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>{key}:</span>
+                        <span style={{ fontFamily: "monospace" }}>{value.toFixed(2)}"</span>
+                      </div>
+                    ))}
+                    {variant.weight && (
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                        <span>Weight:</span>
+                        <span style={{ fontFamily: "monospace" }}>{variant.weight.toFixed(1)} lbs</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, opacity: 0.75 }}>Rotation</div>
