@@ -185,6 +185,9 @@ export default function App() {
   // Inspector panel visibility
   const [inspectorVisible, setInspectorVisible] = useState(true);
 
+  // Ports visibility toggle
+  const [portsVisible, setPortsVisible] = useState(true);
+
   // Stage width tracks available canvas container space
   const [canvasWidth, setCanvasWidth] = useState(0);
   
@@ -874,7 +877,7 @@ export default function App() {
                         fill={isDark ? "#60a5fa" : "#3b82f6"}
                         stroke={isDark ? "#ffffff" : "#1f2937"}
                         strokeWidth={1}
-                        opacity={def.imageSrc ? 0 : 0.6}
+                        opacity={portsVisible && !def.imageSrc ? 0.6 : 0}
                       />
                     ))}
                   </Group>
@@ -971,6 +974,23 @@ export default function App() {
                   -90°
                 </button>
               </div>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <button
+                style={{
+                  padding: 8,
+                  width: "100%",
+                  background: portsVisible ? "var(--bg-accent)" : "var(--bg-secondary)",
+                  border: portsVisible ? "1px solid var(--border-accent)" : "1px solid var(--border-primary)",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                }}
+                onClick={() => setPortsVisible(!portsVisible)}
+                title="Toggle port visibility"
+              >
+                {portsVisible ? "👁️ Hide ports" : "🙈 Show ports"}
+              </button>
             </div>
 
             <button
