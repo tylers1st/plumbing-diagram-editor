@@ -186,7 +186,7 @@ export default function App() {
   const [inspectorVisible, setInspectorVisible] = useState(true);
 
   // Ports visibility toggle
-  const [portsVisible, setPortsVisible] = useState(true);
+  const [portsVisible, setPortsVisible] = useState(false);
 
   // Stage width tracks available canvas container space
   const [canvasWidth, setCanvasWidth] = useState(0);
@@ -877,7 +877,7 @@ export default function App() {
                         fill={isDark ? "#60a5fa" : "#3b82f6"}
                         stroke={isDark ? "#ffffff" : "#1f2937"}
                         strokeWidth={1}
-                        opacity={portsVisible && !def.imageSrc ? 0.6 : 0}
+                        opacity={portsVisible ? 0.6 : 0}
                       />
                     ))}
                   </Group>
