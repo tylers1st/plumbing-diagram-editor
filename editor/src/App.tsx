@@ -720,6 +720,22 @@ export default function App() {
                 const wPx = def.w * GRID;
                 const hPx = def.h * GRID;
 
+                // Calculate scale factor based on variant dimensions
+                let scaleFactor = 1;
+                if (def.variants && def.variants.length > 0) {
+                  const currentVariant = getVariant(def, p.size);
+                  const refVariant = def.variants[0];
+                  if (currentVariant && refVariant) {
+                    // Scale based on D dimension (primary dimension)
+                    const currentD = currentVariant.dims.D || 1;
+                    const refD = refVariant.dims.D || 1;
+                    scaleFactor = currentD / refD;
+                  }
+                }
+
+                const scaledWPx = wPx * scaleFactor;
+                const scaledHPx = hPx * scaleFactor;
+
                 return (
                   <Group
                     key={p.instanceId}
@@ -742,8 +758,8 @@ export default function App() {
                       // Find nearest port globally (excluding this part)
                       // Use the center of this part as the search origin
                       const nearest = findNearestPort(
-                        dragX + (def.w * GRID) / 2,
-                        dragY + (def.h * GRID) / 2,
+                        dragX + scaledWPx / 2,
+                        dragY + scaledHPx / 2,
                         placed,
                         p.instanceId,
                         getPartDefEx
@@ -815,21 +831,21 @@ export default function App() {
                   >
                     {/* Invisible bounding box for selection */}
                     <Rect
-                      width={wPx}
-                      height={hPx}
+                      width={scaledWPx}
+                      height={scaledHPx}
                       fill="transparent"
                       stroke={isSel ? "#ef4444" : "transparent"}
                       strokeWidth={isSel ? 2 : 0}
                     />
                     
                     {/* Part image (if available) */}
-                    <PartImage imageSrc={def.imageSrc} width={wPx} height={hPx} />
+                    <PartImage imageSrc={def.imageSrc} width={scaledWPx} height={scaledHPx} />
                     
                     {/* Fallback: visible rect only if no image */}
                     {!def.imageSrc && (
                       <Rect
-                        width={wPx}
-                        height={hPx}
+                        width={scaledWPx}
+                        height={scaledHPx}
                         fill={isDark ? "#2563eb" : "#93c5fd"}
                         stroke={isDark ? "#e5e7eb" : "#1f2937"}
                         strokeWidth={1}
@@ -854,7 +870,7 @@ export default function App() {
                         key={port.id}
                         x={port.x}
                         y={port.y}
-                        radius={4}
+                        radius={4 * scaleFactor}
                         fill={isDark ? "#60a5fa" : "#3b82f6"}
                         stroke={isDark ? "#ffffff" : "#1f2937"}
                         strokeWidth={1}
