@@ -4,6 +4,7 @@ import useImage from "use-image";
 import "./App.css";
 import { PARTS, evaluatePortExpr, getVariant } from "./catalog/parts";
 import type { PartDef, Port } from "./catalog/parts";
+import PartEditor from "./PartEditor";
 
 const GRID = 25;
 const CANVAS_H = 700;
@@ -205,16 +206,9 @@ export default function App() {
 
   // Custom parts (user-created)
   const [customParts, setCustomParts] = useState<PartDef[]>([]);
-  
-  // Modal state for creating new parts
-  const [showNewPartModal, setShowNewPartModal] = useState(false);
-  const [newPartForm, setNewPartForm] = useState({
-    name: "",
-    kind: "fitting" as const,
-    w: 2,
-    h: 2,
-    sizes: "2,3,4,6",
-  });
+
+  // Part editor overlay: null = closed, { part: null } = create new, { part: PartDef } = edit existing
+  const [partEditorTarget, setPartEditorTarget] = useState<{ part: PartDef | null } | null>(null);
 
   // Merge static and custom parts
   const allParts = [...PARTS, ...customParts];
@@ -265,26 +259,16 @@ export default function App() {
     setSelectedId(newItem.instanceId);
   };
 
-  const createNewPart = () => {
-    const sizes = newPartForm.sizes.split(",").map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
-    
-    const newPart: PartDef = {
-      id: `custom_${uid()}`,
-      name: newPartForm.name || "Unnamed Part",
-      kind: newPartForm.kind,
-      sizes: sizes.length > 0 ? sizes : [2],
-      w: Math.max(1, newPartForm.w),
-      h: Math.max(1, newPartForm.h),
-      ports: [
-        { id: "in", x: 0, y: newPartForm.h * GRID / 2 },
-        { id: "out", x: newPartForm.w * GRID, y: newPartForm.h * GRID / 2 },
-      ],
-      meta: { custom: true },
-    };
-    
-    setCustomParts((prev) => [...prev, newPart]);
-    setShowNewPartModal(false);
-    setNewPartForm({ name: "", kind: "fitting", w: 2, h: 2, sizes: "2,3,4,6" });
+  // Save (create or update) a part coming from PartEditor
+  const savePartFromEditor = (part: PartDef) => {
+    setCustomParts((prev) => {
+      const exists = prev.find((p) => p.id === part.id);
+      if (exists) {
+        return prev.map((p) => (p.id === part.id ? part : p));
+      }
+      return [...prev, part];
+    });
+    setPartEditorTarget(null);
   };
 
   const updateSelected = (patch: Partial<PlacedPart>) => {
@@ -632,7 +616,7 @@ export default function App() {
             border: "1px solid var(--border-primary)",
             color: "var(--text-primary)",
           }}
-          onClick={() => setShowNewPartModal(true)}
+          onClick={() => setPartEditorTarget({ part: null })}
           title="Create a new part definition"
         >
           ➕ New Part
@@ -671,13 +655,29 @@ export default function App() {
 
         <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
           {allParts.map((p) => (
-            <button
-              key={p.id}
-              style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
-              onClick={() => addPart(p)}
-            >
-              {p.name}
-            </button>
+            <div key={p.id} style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+              <button
+                style={{ flex: 1, padding: 10, cursor: "pointer", textAlign: "left" }}
+                onClick={() => addPart(p)}
+              >
+                {p.name}
+              </button>
+              <button
+                style={{
+                  padding: "4px 8px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  flexShrink: 0,
+                }}
+                onClick={() => setPartEditorTarget({ part: p })}
+                title={`Edit "${p.name}" definition`}
+              >
+                ✎
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -1072,175 +1072,14 @@ export default function App() {
       </div>
     )}
 
-    {/* New Part Modal */}
-    {showNewPartModal && (
-      <div
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0, 0, 0, 0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 100,
-        }}
-        onClick={() => setShowNewPartModal(false)}
-      >
-        <div
-          style={{
-            background: "var(--bg-primary)",
-            border: "1px solid var(--border-primary)",
-            borderRadius: "8px",
-            padding: 20,
-            maxWidth: "400px",
-            maxHeight: "90vh",
-            overflow: "auto",
-            color: "var(--text-primary)",
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <h2 style={{ margin: "0 0 16px" }}>Create New Part</h2>
-          
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
-              Part Name
-            </label>
-            <input
-              type="text"
-              value={newPartForm.name}
-              onChange={(e) => setNewPartForm({ ...newPartForm, name: e.target.value })}
-              placeholder="e.g., T-Junction"
-              style={{
-                width: "100%",
-                padding: 8,
-                border: "1px solid var(--border-primary)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
-              Type
-            </label>
-            <select
-              value={newPartForm.kind}
-              onChange={(e) => setNewPartForm({ ...newPartForm, kind: e.target.value as any })}
-              style={{
-                width: "100%",
-                padding: 8,
-                border: "1px solid var(--border-primary)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-                boxSizing: "border-box",
-              }}
-            >
-              <option value="pipe">Pipe</option>
-              <option value="fitting">Fitting</option>
-              <option value="fixture">Fixture</option>
-            </select>
-          </div>
-
-          <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
-                Width (grid cells)
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="10"
-                value={newPartForm.w}
-                onChange={(e) => setNewPartForm({ ...newPartForm, w: parseInt(e.target.value) || 2 })}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  border: "1px solid var(--border-primary)",
-                  background: "var(--bg-secondary)",
-                  color: "var(--text-primary)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
-                Height (grid cells)
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="10"
-                value={newPartForm.h}
-                onChange={(e) => setNewPartForm({ ...newPartForm, h: parseInt(e.target.value) || 2 })}
-                style={{
-                  width: "100%",
-                  padding: 8,
-                  border: "1px solid var(--border-primary)",
-                  background: "var(--bg-secondary)",
-                  color: "var(--text-primary)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
-              Available Sizes (comma-separated)
-            </label>
-            <input
-              type="text"
-              value={newPartForm.sizes}
-              onChange={(e) => setNewPartForm({ ...newPartForm, sizes: e.target.value })}
-              placeholder="e.g., 2,3,4,6"
-              style={{
-                width: "100%",
-                padding: 8,
-                border: "1px solid var(--border-primary)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={createNewPart}
-              style={{
-                flex: 1,
-                padding: 10,
-                background: "var(--bg-accent)",
-                border: "1px solid var(--border-accent)",
-                color: "var(--text-primary)",
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              Create
-            </button>
-            <button
-              onClick={() => setShowNewPartModal(false)}
-              style={{
-                flex: 1,
-                padding: 10,
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-primary)",
-                color: "var(--text-primary)",
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
+    {/* Part Editor Overlay */}
+    {partEditorTarget !== null && (
+      <PartEditor
+        initialPart={partEditorTarget.part}
+        isDark={isDark}
+        onSave={savePartFromEditor}
+        onClose={() => setPartEditorTarget(null)}
+      />
     )}
   </>
   );
