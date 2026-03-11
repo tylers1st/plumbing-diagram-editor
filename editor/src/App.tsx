@@ -135,7 +135,7 @@ function findNearestPort(
   y: number,
   placed: PlacedPart[],
   exceptInstanceId: string,
-  getPartDefFn: (id: string) => PartDef,
+  getPortsFn: (part: PlacedPart) => Port[],
   snapDistance: number = 100
 ): { partInstanceId: string; port: Port; distance: number } | null {
   let nearest: {
@@ -146,8 +146,7 @@ function findNearestPort(
 
   for (const part of placed) {
     if (part.instanceId === exceptInstanceId) continue;
-    const def = getPartDefFn(part.partId);
-    const ports = getResolvedPorts(part, def);
+    const ports = getPortsFn(part);
     if (!ports || ports.length === 0) continue;
 
     for (const port of ports) {
@@ -770,7 +769,7 @@ export default function App() {
                       const dragY = e.target.y();
                       
                       const def = getPartDefEx(p.partId);
-                      const ports = getResolvedPorts(p, def);
+                      const ports = getPortsWithCustom(p, def);
                       
                       // Find nearest port globally (excluding this part)
                       // Use the center of this part as the search origin
@@ -779,7 +778,7 @@ export default function App() {
                         dragY + scaledHPx / 2,
                         placed,
                         p.instanceId,
-                        getPartDefEx
+                        (part) => getPortsWithCustom(part, getPartDefEx(part.partId))
                       );
                       
                       let finalX = dragX;
