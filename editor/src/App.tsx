@@ -1,12 +1,14 @@
 import { useMemo, useState, useEffect, useRef } from "react";
-import { Stage, Layer, Line, Rect, Text, Group } from "react-konva";
+import { Stage, Layer, Line, Rect, Text, Group, Circle, Image as KonvaImage } from "react-konva";
+import useImage from "use-image";
 import "./App.css";
-import { PARTS } from "./catalog/parts";
-import type { PartDef } from "./catalog/parts";
+import { PARTS, evaluatePortExpr, getVariant } from "./catalog/parts";
+import type { PartDef, Port } from "./catalog/parts";
+import PartEditor from "./PartEditor";
 
 const GRID = 25;
-const CANVAS_W = 1100;
 const CANVAS_H = 700;
+const INSPECTOR_W = 280;
 
 // Hook to detect dark mode
 function useDarkMode() {
@@ -24,13 +26,23 @@ function useDarkMode() {
   return isDark;
 }
 
-function Grid({ isDark }: { isDark: boolean }) {
-  // Build the static grid lines once; the canvas dimensions are constants.
+// Component to render a part with optional image
+function PartImage({ imageSrc, width, height }: { imageSrc?: string; width: number; height: number }) {
+  const [image] = useImage(imageSrc || "");
+  
+  if (imageSrc && image) {
+    return <KonvaImage image={image} width={width} height={height} />;
+  }
+  
+  return null; // No image, geometry is invisible
+}
+
+function Grid({ isDark, width }: { isDark: boolean; width: number }) {
   const lines = useMemo(() => {
     const l: any[] = [];
     const gridColor = isDark ? "#404040" : "#e5e7eb";
 
-    for (let x = 0; x <= CANVAS_W; x += GRID) {
+    for (let x = 0; x <= width; x += GRID) {
       l.push(
         <Line
           key={`vx${x}`}
@@ -45,7 +57,7 @@ function Grid({ isDark }: { isDark: boolean }) {
       l.push(
         <Line
           key={`hy${y}`}
-          points={[0, y, CANVAS_W, y]}
+          points={[0, y, width, y]}
           stroke={gridColor}
           strokeWidth={1}
           listening={false}
@@ -53,7 +65,7 @@ function Grid({ isDark }: { isDark: boolean }) {
       );
     }
     return l;
-  }, [isDark]);
+  }, [isDark, width]);
 
   return <>{lines}</>;
 }
@@ -71,10 +83,86 @@ function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-function getPartDef(partId: string): PartDef {
-  const p = PARTS.find((x) => x.id === partId);
-  if (!p) throw new Error(`Unknown partId: ${partId}`);
-  return p;
+/**
+ * Get ports for a placed part, evaluating expressions if using new format.
+ * Returns legacy Port[] format for consistent handling.
+ */
+function getResolvedPorts(placed: PlacedPart, def: PartDef): Port[] {
+  // If part uses new portDefs format, evaluate expressions for selected variant
+  if (def.portDefs && def.portDefs.length > 0 && def.variants && def.variants.length > 0) {
+    const variant = getVariant(def, placed.size);
+    if (variant) {
+      // Evaluate port expressions to pixel coordinates
+      // 1 inch = 50 pixels (conversion factor)
+      const INCH_TO_PX = 50;
+      return def.portDefs.map((pd) => ({
+        id: pd.id,
+        x: evaluatePortExpr(pd.xExpr, variant.dims) * INCH_TO_PX,
+        y: evaluatePortExpr(pd.yExpr, variant.dims) * INCH_TO_PX,
+      }));
+    }
+  }
+
+  // Fall back to legacy hardcoded ports
+  return def.ports || [];
+}
+
+// Calculate world coordinates of a port on a placed part
+// accounting for position and rotation
+function getPortWorldCoords(
+  placed: PlacedPart,
+  port: Port
+): { x: number; y: number } {
+  // Rotation in degrees
+  const angleRad = (placed.rotation * Math.PI) / 180;
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+
+  // Port coordinates are relative to the Group's origin (top-left)
+  // Konva rotates around the origin, so we rotate the port coords around (0,0)
+  const rotX = port.x * cos - port.y * sin;
+  const rotY = port.x * sin + port.y * cos;
+
+  // World coords = part position + rotated port offset
+  return {
+    x: placed.x + rotX,
+    y: placed.y + rotY,
+  };
+}
+
+// Find nearest port to a given position from all parts except the dragging one
+function findNearestPort(
+  x: number,
+  y: number,
+  placed: PlacedPart[],
+  exceptInstanceId: string,
+  getPortsFn: (part: PlacedPart) => Port[],
+  snapDistance: number = 100
+): { partInstanceId: string; port: Port; distance: number } | null {
+  let nearest: {
+    partInstanceId: string;
+    port: Port;
+    distance: number;
+  } | null = null;
+
+  for (const part of placed) {
+    if (part.instanceId === exceptInstanceId) continue;
+    const ports = getPortsFn(part);
+    if (!ports || ports.length === 0) continue;
+
+    for (const port of ports) {
+      const { x: px, y: py } = getPortWorldCoords(part, port);
+      const dx = px - x;
+      const dy = py - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < snapDistance && (!nearest || dist < nearest.distance)) {
+        nearest = { partInstanceId: part.instanceId, port, distance: dist };
+      }
+    }
+  }
+
+  return nearest;
 }
 
 export default function App() {
@@ -92,9 +180,22 @@ export default function App() {
   
   // Reference to the Konva Stage for PNG export
   const stageRef = useRef<any>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   
   // Inspector panel visibility
   const [inspectorVisible, setInspectorVisible] = useState(true);
+
+  // Ports visibility toggle
+  const [portsVisible, setPortsVisible] = useState(false);
+
+  // Port edit mode - tracks which part's ports are being edited
+  const [editingPortsPartId, setEditingPortsPartId] = useState<string | null>(null);
+
+  // Custom port positions per instance (for editing)
+  const [customPorts, setCustomPorts] = useState<Record<string, Port[]>>({});
+
+  // Stage width tracks available canvas container space
+  const [canvasWidth, setCanvasWidth] = useState(0);
   
   // Panning state for canvas
   const [isPanning, setIsPanning] = useState(false);
@@ -103,8 +204,33 @@ export default function App() {
   // Zoom state (1 = 100%)
   const [zoom, setZoom] = useState(1);
 
+  // Custom parts (user-created)
+  const [customParts, setCustomParts] = useState<PartDef[]>([]);
+
+  // Part editor overlay: null = closed, { part: null } = create new, { part: PartDef } = edit existing
+  const [partEditorTarget, setPartEditorTarget] = useState<{ part: PartDef | null } | null>(null);
+
+  // Merge static and custom parts
+  const allParts = [...PARTS, ...customParts];
+  
+  // Override getPartDef to search custom parts too
+  const getPartDefEx = (partId: string): PartDef => {
+    const p = allParts.find((x) => x.id === partId);
+    if (!p) throw new Error(`Unknown partId: ${partId}`);
+    return p;
+  };
+
   const selected = selectedId ? placed.find((p) => p.instanceId === selectedId) ?? null : null;
-  const selectedDef = selected ? getPartDef(selected.partId) : null;
+  const selectedDef = selected ? getPartDefEx(selected.partId) : null;
+  const stageWidth = Math.max(GRID * 8, canvasWidth);
+
+  // Get ports considering custom edits
+  const getPortsWithCustom = (placedPart: PlacedPart, def: PartDef): Port[] => {
+    if (customPorts[placedPart.instanceId]) {
+      return customPorts[placedPart.instanceId];
+    }
+    return getResolvedPorts(placedPart, def);
+  };
 
   // Save current state to history before making changes
   const saveHistory = () => {
@@ -131,6 +257,18 @@ export default function App() {
     };
     setPlaced((prev) => [...prev, newItem]);
     setSelectedId(newItem.instanceId);
+  };
+
+  // Save (create or update) a part coming from PartEditor
+  const savePartFromEditor = (part: PartDef) => {
+    setCustomParts((prev) => {
+      const exists = prev.find((p) => p.id === part.id);
+      if (exists) {
+        return prev.map((p) => (p.id === part.id ? part : p));
+      }
+      return [...prev, part];
+    });
+    setPartEditorTarget(null);
   };
 
   const updateSelected = (patch: Partial<PlacedPart>) => {
@@ -185,6 +323,23 @@ export default function App() {
     copySelected();
     pasteFromClipboard();
   };
+
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+
+    const updateCanvasWidth = () => {
+      // Subtract inner wrapper padding (12px on each side).
+      setCanvasWidth(Math.max(0, el.clientWidth - 24));
+    };
+
+    updateCanvasWidth();
+
+    const observer = new ResizeObserver(updateCanvasWidth);
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, []);
 
   // Handle zooming
   const handleZoom = (direction: 'in' | 'out') => {
@@ -323,184 +478,475 @@ export default function App() {
   }, [selected, history, clipboard]); // Dependencies ensure handlers have current state
 
   return (
-    <>
-      {/* Fixed Controls Panel */}
-      <div style={{ position: "fixed", left: 0, top: 0, width: "180px", height: "100vh", background: "var(--bg-primary)", borderRight: "1px solid var(--border-primary)", padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, overflow: "auto", alignContent: "start", zIndex: 5 }}>
-          <div style={{ gridColumn: "1 / -1", fontSize: 11, opacity: 0.8, marginBottom: 0 }}>Zoom: {(zoom * 100).toFixed(0)}%</div>
-          <div style={{ gridColumn: "1 / -1", display: "flex", gap: 4 }}>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => handleZoom('out')}
-              title="Zoom out (-)"
-            >
-              −
-            </button>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => setZoom(1)}
-              title="Reset zoom to 100%"
-            >
-              Reset
-            </button>
-            <button
-              style={{ flex: 1, padding: 6, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-              onClick={() => handleZoom('in')}
-              title="Zoom in (+)"
-            >
-              +
-            </button>
-          </div>
-          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border-primary)", margin: "3px 0" }} />
+  <>
+    {/* Base layout: Controls | Catalog | Canvas */}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "180px 260px 1fr",
+        height: "100vh",
+        background: "var(--bg-primary)",
+        color: "var(--text-primary)",
+        overflow: "hidden",
+      }}
+    >
+      {/* Controls Panel (left) */}
+      <div
+        style={{
+          height: "100vh",
+          background: "var(--bg-primary)",
+          borderRight: "1px solid var(--border-primary)",
+          padding: 12,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 6,
+          overflow: "auto",
+          alignContent: "start",
+        }}
+      >
+        <div style={{ gridColumn: "1 / -1", fontSize: 11, opacity: 0.8, marginBottom: 0 }}>
+          Zoom: {(zoom * 100).toFixed(0)}%
+        </div>
+
+        <div style={{ gridColumn: "1 / -1", display: "flex", gap: 4 }}>
           <button
-            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={exportToFile}
-            title="Export diagram to JSON file (Ctrl+S)"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => handleZoom("out")}
+            title="Zoom out (-)"
           >
-            💾 JSON
+            −
           </button>
+
           <button
-            style={{ padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={exportToPng}
-            title="Export diagram to PNG image (Ctrl+Shift+S)"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => setZoom(1)}
+            title="Reset zoom to 100%"
           >
-            🖼️ PNG
+            Reset
           </button>
+
           <button
-            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-accent)", border: "1px solid var(--border-accent)", color: "var(--text-primary)" }}
-            onClick={importFromFile}
-            title="Import diagram from JSON file"
+            style={{
+              flex: 1,
+              padding: 6,
+              fontSize: 12,
+              cursor: "pointer",
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+            }}
+            onClick={() => handleZoom("in")}
+            title="Zoom in (+)"
           >
-            📂 Import
+            +
           </button>
-          <button
-            style={{ gridColumn: "1 / -1", padding: 8, fontSize: 12, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
-            onClick={() => setInspectorVisible(!inspectorVisible)}
-            title="Toggle inspector panel"
-          >
-            {inspectorVisible ? "Hide" : "Show"}
-          </button>
+        </div>
+
+        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border-primary)", margin: "3px 0" }} />
+
+        <button
+          style={{
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={exportToFile}
+          title="Export diagram to JSON file (Ctrl+S)"
+        >
+          💾 JSON
+        </button>
+
+        <button
+          style={{
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={exportToPng}
+          title="Export diagram to PNG image (Ctrl+Shift+S)"
+        >
+          🖼️ PNG
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-accent)",
+            border: "1px solid var(--border-accent)",
+            color: "var(--text-primary)",
+          }}
+          onClick={importFromFile}
+          title="Import diagram from JSON file"
+        >
+          📂 Import
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+            color: "var(--text-primary)",
+          }}
+          onClick={() => setPartEditorTarget({ part: null })}
+          title="Create a new part definition"
+        >
+          ➕ New Part
+        </button>
+
+        <button
+          style={{
+            gridColumn: "1 / -1",
+            padding: 8,
+            fontSize: 12,
+            cursor: "pointer",
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+            color: "var(--text-primary)",
+          }}
+          onClick={() => setInspectorVisible(!inspectorVisible)}
+          title="Toggle inspector panel"
+        >
+          {inspectorVisible ? "Hide" : "Show"} Inspector
+        </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100vh", background: "var(--bg-primary)", color: "var(--text-primary)", overflow: "hidden", marginLeft: "0px" }}>
-        {/* Parts Panel */}
-        <div style={{ borderRight: "1px solid var(--border-primary)", padding: 12, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-          <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
+      {/* Catalog Panel (middle) */}
+      <div
+        style={{
+          borderRight: "1px solid var(--border-primary)",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          height: "100vh",
+          overflow: "hidden",
+          background: "var(--bg-primary)",
+        }}
+      >
+        <h3 style={{ margin: "0 0 12px", flexShrink: 0 }}>Parts</h3>
 
-          <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
-            {PARTS.map((p) => (
-          <button
-            key={p.id}
-            style={{ width: "100%", padding: 10, cursor: "pointer", marginBottom: 8, textAlign: "left" }}
-            onClick={() => addPart(p)}
-          >
-            {p.name}
-          </button>
-            ))}
-          </div>
+        <div style={{ flex: 1, overflowY: "auto", paddingRight: 4 }}>
+          {allParts.map((p) => (
+            <div key={p.id} style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+              <button
+                style={{ flex: 1, padding: 10, cursor: "pointer", textAlign: "left" }}
+                onClick={() => addPart(p)}
+              >
+                {p.name}
+              </button>
+              <button
+                style={{
+                  padding: "4px 8px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  flexShrink: 0,
+                }}
+                onClick={() => setPartEditorTarget({ part: p })}
+                title={`Edit "${p.name}" definition`}
+              >
+                ✎
+              </button>
+            </div>
+          ))}
         </div>
-      
-        {/* Canvas */}
-        <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: "var(--canvas-bg)", overflow: "hidden" }}>
+      </div>
+
+      {/* Canvas (right) */}
+      <div
+        ref={canvasWrapRef}
+        style={{ height: "100vh", background: "var(--canvas-bg)", overflow: "hidden", paddingRight: inspectorVisible ? INSPECTOR_W : 0 }}
+      >
+        {/* Prefer padding around the Stage rather than Stage margin */}
+        <div style={{ padding: 12 }}>
           <Stage
             ref={stageRef}
-            width={CANVAS_W}
+            width={stageWidth}
             height={CANVAS_H}
-            style={{ border: "1px solid var(--border-primary)", margin: 12, cursor: isPanning ? "grabbing" : "default" }}
+            style={{
+              border: "1px solid var(--border-primary)",
+              cursor: isPanning ? "grabbing" : "default",
+              background: "var(--canvas-bg)",
+            }}
             onMouseDown={(e) => {
-            // Middle mouse button for panning
-            if (e.evt.button === 1) {
-              e.evt.preventDefault();
-              setIsPanning(true);
-              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
-            }
-            // Click empty space to deselect
-            else if (e.target === e.target.getStage()) {
-              setSelectedId(null);
-            }
-          }}
-          onMouseMove={(e) => {
-            if (isPanning && stageRef.current) {
-              const dx = e.evt.clientX - panStart.x;
-              const dy = e.evt.clientY - panStart.y;
-              const layers = stageRef.current.getLayers();
-              layers.forEach((layer: any) => {
-                layer.move({ x: dx, y: dy });
-              });
-              setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
-            }
-          }}
-          onMouseUp={() => {
-            setIsPanning(false);
-          }}
-          onWheel={(e) => {
-            // Zoom with mouse wheel (Ctrl+Scroll)
-            if (e.evt.ctrlKey || e.evt.metaKey) {
-              e.evt.preventDefault();
-              handleZoom(e.evt.deltaY > 0 ? 'out' : 'in');
-            }
-          }}
-        >
-          <Layer>
-            <Grid isDark={isDark} />
-          </Layer>
+              if (e.evt.button === 1) {
+                e.evt.preventDefault();
+                setIsPanning(true);
+                setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+              } else if (e.target === e.target.getStage()) {
+                setSelectedId(null);
+              }
+            }}
+            onMouseMove={(e) => {
+              if (isPanning && stageRef.current) {
+                const dx = e.evt.clientX - panStart.x;
+                const dy = e.evt.clientY - panStart.y;
+                const layers = stageRef.current.getLayers();
+                layers.forEach((layer: any) => layer.move({ x: dx, y: dy }));
+                setPanStart({ x: e.evt.clientX, y: e.evt.clientY });
+              }
+            }}
+            onMouseUp={() => setIsPanning(false)}
+            onWheel={(e) => {
+              if (e.evt.ctrlKey || e.evt.metaKey) {
+                e.evt.preventDefault();
+                handleZoom(e.evt.deltaY > 0 ? "out" : "in");
+              }
+            }}
+          >
+            <Layer>
+              <Grid isDark={isDark} width={stageWidth} />
+            </Layer>
 
-          <Layer>
-            {placed.map((p) => {
-              const def = getPartDef(p.partId);
-              const isSel = p.instanceId === selectedId;
+            <Layer>
+              {placed.map((p) => {
+                const def = getPartDefEx(p.partId);
+                const isSel = p.instanceId === selectedId;
 
-              const wPx = def.w * GRID;
-              const hPx = def.h * GRID;
+                const wPx = def.w * GRID;
+                const hPx = def.h * GRID;
 
-              return (
-                <Group
-                  key={p.instanceId}
-                  x={p.x}
-                  y={p.y}
-                  rotation={p.rotation}
-                  draggable
-                  onMouseDown={(e) => {
-                    e.cancelBubble = true;
-                    setSelectedId(p.instanceId);
-                  }}
-                  onDragStart={() => {
-                    // Save state before drag for undo
-                    saveHistory();
-                  }}
-                  onDragEnd={(e) => {
-                    // Snap to grid: convert px to grid units, round to nearest cell, then convert back to px.
-                    const nx = Math.round(e.target.x() / GRID) * GRID;
-                    const ny = Math.round(e.target.y() / GRID) * GRID;
+                // Calculate scale factor based on variant dimensions
+                let scaleFactor = 1;
+                if (def.variants && def.variants.length > 0) {
+                  const currentVariant = getVariant(def, p.size);
+                  const refVariant = def.variants[0];
+                  if (currentVariant && refVariant) {
+                    // Scale based on D dimension (primary dimension)
+                    const currentD = currentVariant.dims.D || 1;
+                    const refD = refVariant.dims.D || 1;
+                    scaleFactor = currentD / refD;
+                  }
+                }
 
-                    // Immediately update the visual position to prevent async state update delay
-                    e.target.position({ x: nx, y: ny });
+                const scaledWPx = wPx * scaleFactor;
+                const scaledHPx = hPx * scaleFactor;
 
-                    setPlaced((prev) =>
-                      prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: nx, y: ny } : item))
-                    );
-                  }}
-                >
-                  <Rect
-                    width={wPx}
-                    height={hPx}
-                    fill={isDark ? "#2563eb" : "#93c5fd"}
-                    stroke={isSel ? "#ef4444" : (isDark ? "#e5e7eb" : "#1f2937")}
-                    strokeWidth={isSel ? 3 : 1}
-                  />
-                  <Text x={6} y={6} text={`${def.name}\n${p.size}"`} fontSize={12} fill={isDark ? "#e5e7eb" : "#111827"} />
-                </Group>
-              );
-            })}
+                return (
+                  <Group
+                    key={p.instanceId}
+                    x={p.x}
+                    y={p.y}
+                    rotation={p.rotation}
+                    draggable
+                    onMouseDown={(e) => {
+                      e.cancelBubble = true;
+                      setSelectedId(p.instanceId);
+                    }}
+                    onDragStart={saveHistory}
+                    onDragEnd={(e) => {
+                      const dragX = e.target.x();
+                      const dragY = e.target.y();
+                      
+                      const def = getPartDefEx(p.partId);
+                      const ports = getPortsWithCustom(p, def);
+                      
+                      // Find nearest port globally (excluding this part)
+                      // Use the center of this part as the search origin
+                      const nearest = findNearestPort(
+                        dragX + scaledWPx / 2,
+                        dragY + scaledHPx / 2,
+                        placed,
+                        p.instanceId,
+                        (part) => getPortsWithCustom(part, getPartDefEx(part.partId))
+                      );
+                      
+                      let finalX = dragX;
+                      let finalY = dragY;
+                      
+                      if (nearest) {
+                        // Find the closest port on this part to the target port
+                        const targetPart = placed.find(
+                          (part) => part.instanceId === nearest.partInstanceId
+                        );
+                        
+                        if (targetPart) {
+                          const targetPortWorld = getPortWorldCoords(
+                            targetPart,
+                            nearest.port
+                          );
+                          
+                          // Find which of our ports is closest to the target
+                          let bestOwnPort = ports[0];
+                          let bestDistance = Infinity;
+                          
+                          for (const ownPort of ports) {
+                            const ownPortWorld = getPortWorldCoords(
+                              { ...p, x: dragX, y: dragY },
+                              ownPort
+                            );
+                            const dist = Math.sqrt(
+                              Math.pow(ownPortWorld.x - targetPortWorld.x, 2) +
+                              Math.pow(ownPortWorld.y - targetPortWorld.y, 2)
+                            );
+                            if (dist < bestDistance) {
+                              bestDistance = dist;
+                              bestOwnPort = ownPort;
+                            }
+                          }
+                          
+                          if (bestOwnPort) {
+                            // Get the port's position in world space with current drag position
+                            const ownPortWorld = getPortWorldCoords(
+                              { ...p, x: dragX, y: dragY },
+                              bestOwnPort
+                            );
+                            
+                            // Calculate the offset from the part's top-left position to the port in world space
+                            // This offset is rotation-dependent, so we account for it properly
+                            const portOffsetFromPartX = ownPortWorld.x - dragX;
+                            const portOffsetFromPartY = ownPortWorld.y - dragY;
+                            
+                            // Position the part so that its port aligns with the target port
+                            finalX = targetPortWorld.x - portOffsetFromPartX;
+                            finalY = targetPortWorld.y - portOffsetFromPartY;
+                          }
+                        }
+                      } else {
+                        // Fall back to grid snap only if NO nearby ports
+                        finalX = Math.round(dragX / GRID) * GRID;
+                        finalY = Math.round(dragY / GRID) * GRID;
+                      }
 
-            <Text x={10} y={10} text="Plumbing editor prototype: catalog + select + snap" fontSize={14} fill={isDark ? "#e5e7eb" : "#111827"} />
-          </Layer>
-        </Stage>
+                      e.target.position({ x: finalX, y: finalY });
+
+                      setPlaced((prev) =>
+                        prev.map((item) => (item.instanceId === p.instanceId ? { ...item, x: finalX, y: finalY } : item))
+                      );
+                    }}
+                  >
+                    {/* Invisible bounding box for selection */}
+                    <Rect
+                      width={scaledWPx}
+                      height={scaledHPx}
+                      fill="transparent"
+                      stroke={isSel ? "#ef4444" : "transparent"}
+                      strokeWidth={isSel ? 2 : 0}
+                    />
+                    
+                    {/* Part image (if available) */}
+                    <PartImage imageSrc={def.imageSrc} width={scaledWPx} height={scaledHPx} />
+                    
+                    {/* Fallback: visible rect only if no image */}
+                    {!def.imageSrc && (
+                      <Rect
+                        width={scaledWPx}
+                        height={scaledHPx}
+                        fill={isDark ? "#2563eb" : "#93c5fd"}
+                        stroke={isDark ? "#e5e7eb" : "#1f2937"}
+                        strokeWidth={1}
+                      />
+                    )}
+                    
+                    {/* Text label (only show if no image or when selected) */}
+                    {(!def.imageSrc || isSel) && (
+                      <Text
+                        x={6}
+                        y={6}
+                        text={`${def.name}\n${p.size}"`}
+                        fontSize={12}
+                        fill={isDark ? "#e5e7eb" : "#111827"}
+                        opacity={def.imageSrc ? 0.7 : 1}
+                      />
+                    )}
+                    
+                    {/* Ports - invisible but still functional for snapping */}
+                    {getResolvedPorts(p, def).map((port) => {
+                      const isEditingThisPart = editingPortsPartId === p.instanceId;
+                      // Use custom ports if in edit mode, otherwise use original
+                      const displayPort = customPorts[p.instanceId]?.find(cp => cp.id === port.id) || port;
+                      return (
+                        <Circle
+                          key={port.id}
+                          x={displayPort.x}
+                          y={displayPort.y}
+                          radius={isEditingThisPart ? 6 * scaleFactor : 4 * scaleFactor}
+                          fill={isEditingThisPart ? "#ff6b6b" : isDark ? "#60a5fa" : "#3b82f6"}
+                          stroke={isDark ? "#ffffff" : "#1f2937"}
+                          strokeWidth={isEditingThisPart ? 2 : 1}
+                          opacity={portsVisible || isEditingThisPart ? 0.8 : 0}
+                          draggable={isEditingThisPart}
+                          onDragEnd={(e) => {
+                            if (isEditingThisPart) {
+                              const newX = e.target.x();
+                              const newY = e.target.y();
+                              setCustomPorts((prev) => {
+                                const instancePorts = prev[p.instanceId] || getResolvedPorts(p, def);
+                                return {
+                                  ...prev,
+                                  [p.instanceId]: instancePorts.map((pt) =>
+                                    pt.id === port.id ? { ...pt, x: newX, y: newY } : pt
+                                  ),
+                                };
+                              });
+                            }
+                          }}
+                        />
+                      );
+                    })}
+                  </Group>
+                );
+              })}
+
+              <Text
+                x={10}
+                y={10}
+                text="Plumbing editor prototype: catalog + select + snap"
+                fontSize={14}
+                fill={isDark ? "#e5e7eb" : "#111827"}
+              />
+            </Layer>
+          </Stage>
         </div>
       </div>
+    </div>
 
-      {/* Inspector - Overlay Panel */}
-      {inspectorVisible && (
-      <div style={{ position: "fixed", right: 0, top: 0, width: 280, height: "100vh", background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)", padding: 12, overflow: "auto", zIndex: 10 }}>
+    {/* Inspector - Overlay Panel (does not affect layout width) */}
+    {inspectorVisible && (
+      <div
+        style={{
+          position: "fixed",
+          right: 0,
+          top: 0,
+          width: 280,
+          height: "100vh",
+          background: "var(--bg-primary)",
+          borderLeft: "1px solid var(--border-primary)",
+          padding: 12,
+          overflow: "auto",
+          zIndex: 10,
+        }}
+      >
         <h3 style={{ margin: "0 0 12px" }}>Inspector</h3>
 
         {!selected || !selectedDef ? (
@@ -527,6 +973,31 @@ export default function App() {
               </select>
             </div>
 
+            {/* Show dimensional data if available */}
+            {selectedDef.variants && selectedDef.variants.length > 0 && (() => {
+              const variant = getVariant(selectedDef, selected.size);
+              if (variant) {
+                return (
+                  <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.8 }}>
+                    <div style={{ opacity: 0.75, marginBottom: 4 }}>Dimensions</div>
+                    {Object.entries(variant.dims).map(([key, value]) => (
+                      <div key={key} style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>{key}:</span>
+                        <span style={{ fontFamily: "monospace" }}>{value.toFixed(2)}"</span>
+                      </div>
+                    ))}
+                    {variant.weight && (
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                        <span>Weight:</span>
+                        <span style={{ fontFamily: "monospace" }}>{variant.weight.toFixed(1)} lbs</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, opacity: 0.75 }}>Rotation</div>
               <div style={{ display: "flex", gap: 8 }}>
@@ -537,6 +1008,53 @@ export default function App() {
                   -90°
                 </button>
               </div>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <button
+                style={{
+                  padding: 8,
+                  width: "100%",
+                  background: portsVisible ? "var(--bg-accent)" : "var(--bg-secondary)",
+                  border: portsVisible ? "1px solid var(--border-accent)" : "1px solid var(--border-primary)",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                }}
+                onClick={() => setPortsVisible(!portsVisible)}
+                title="Toggle port visibility"
+              >
+                {portsVisible ? "👁️ Hide ports" : "🙈 Show ports"}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <button
+                style={{
+                  padding: 8,
+                  width: "100%",
+                  background: editingPortsPartId === selected.instanceId ? "#ff6b6b" : "var(--bg-secondary)",
+                  border: editingPortsPartId === selected.instanceId ? "1px solid #ff4444" : "1px solid var(--border-primary)",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                }}
+                onClick={() => {
+                  if (editingPortsPartId === selected.instanceId) {
+                    setEditingPortsPartId(null);
+                  } else {
+                    // Initialize custom ports from current resolved ports
+                    const currentPorts = getResolvedPorts(selected, selectedDef!);
+                    setCustomPorts((prev) => ({
+                      ...prev,
+                      [selected.instanceId]: currentPorts,
+                    }));
+                    setEditingPortsPartId(selected.instanceId);
+                    setPortsVisible(true); // Show ports when entering edit mode
+                  }
+                }}
+                title="Enter port edit mode - drag ports to reposition"
+              >
+                {editingPortsPartId === selected.instanceId ? "✓ Exit edit mode" : "✎ Edit ports"}
+              </button>
             </div>
 
             <button
@@ -552,7 +1070,17 @@ export default function App() {
           </>
         )}
       </div>
-      )}
-    </>
+    )}
+
+    {/* Part Editor Overlay */}
+    {partEditorTarget !== null && (
+      <PartEditor
+        initialPart={partEditorTarget.part}
+        isDark={isDark}
+        onSave={savePartFromEditor}
+        onClose={() => setPartEditorTarget(null)}
+      />
+    )}
+  </>
   );
 }
