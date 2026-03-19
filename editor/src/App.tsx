@@ -271,6 +271,16 @@ export default function App() {
     setPartEditorTarget(null);
   };
 
+  // Delete a custom part from the catalog
+  const deleteCustomPart = (partId: string) => {
+    const variableName = customParts.find(p => p.id === partId)?.name || "this part";
+    if (confirm(`Are you sure you want to delete ${variableName}? Any placed instances will be lost.`)) {
+      setCustomParts((prev) => prev.filter((p) => p.id !== partId));
+      // Also remove any instances of this part from the canvas
+      setPlaced((prev) => prev.filter((p) => p.partId !== partId));
+    }
+  };
+
   const updateSelected = (patch: Partial<PlacedPart>) => {
     if (!selectedId) return;
     saveHistory();
@@ -677,6 +687,23 @@ export default function App() {
               >
                 ✎
               </button>
+              {p.meta?.custom && (
+                <button
+                  style={{
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    background: "var(--bg-secondary)",
+                    border: "1px solid var(--border-primary)",
+                    color: "#ef4444",
+                    flexShrink: 0,
+                  }}
+                  onClick={() => deleteCustomPart(p.id)}
+                  title={`Delete "${p.name}"`}
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -873,6 +900,7 @@ export default function App() {
                       <Text
                         x={6}
                         y={6}
+                        z={1} // Ensure text is above the rectangle
                         text={`${def.name}\n${p.size}"`}
                         fontSize={12}
                         fill={isDark ? "#e5e7eb" : "#111827"}
